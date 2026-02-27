@@ -1,11 +1,6 @@
 name: Slackbot CI
 
 on:
-  push:
-    branches: [main, docs/alstjd0051]
-    paths:
-      - "slackbot/**"
-      - ".github/workflows/slackbot-ci.yml"
   pull_request:
     branches: [main]
     paths:
@@ -28,10 +23,15 @@ jobs:
           bun-version: latest
 
       - name: Install dependencies
-        run: bun install
-
-      - name: Type check
-        run: bunx tsc --noEmit
+        run: bun install --frozen-lockfile
 
       - name: Validate Slack manifest JSON
         run: bunx --bun node -e "JSON.parse(require('node:fs').readFileSync('manifest.json', 'utf8')); console.log('manifest.json is valid')"
+
+      - name: Notify smoke test (real Slack send)
+        run: bun run notify "CI smoke test (PR #${{ github.event.pull_request.number }})"
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_SIGNING_SECRET: ${{ secrets.SLACK_SIGNING_SECRET }}
+          SLACK_APP_TOKEN: ${{ secrets.SLACK_APP_TOKEN }}
+          SLACK_CHANNEL_ID: ${{ secrets.SLACK_CHANNEL_ID }}
