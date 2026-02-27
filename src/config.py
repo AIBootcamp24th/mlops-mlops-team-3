@@ -1,0 +1,24 @@
+from pydantic import Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+
+    aws_region: str = Field(default="ap-northeast-2", alias="AWS_REGION")
+    aws_access_key_id: str = Field(default="", alias="AWS_ACCESS_KEY_ID")
+    aws_secret_access_key: str = Field(default="", alias="AWS_SECRET_ACCESS_KEY")
+    aws_s3_raw_bucket: str = Field(default="", alias="AWS_S3_RAW_BUCKET")
+    aws_s3_model_bucket: str = Field(default="", alias="AWS_S3_MODEL_BUCKET")
+    aws_s3_pred_bucket: str = Field(default="", alias="AWS_S3_PRED_BUCKET")
+    train_queue_url: str = Field(default="", alias="TRAIN_QUEUE_URL")
+
+    wandb_api_key: str = Field(default="", alias="WANDB_API_KEY")
+    wandb_project: str = Field(default="tmdb-rating-mlops", alias="WANDB_PROJECT")
+    wandb_entity: str = Field(default="", alias="WANDB_ENTITY")
+
+    slack_bot_token: str = Field(default="", alias="SLACK_BOT_TOKEN")
+    slack_channel_id: str = Field(default="", alias="SLACK_CHANNEL_ID")
+
+
+settings = Settings()

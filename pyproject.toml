@@ -1,17 +1,35 @@
 [project]
-name = "mlops-mlops-team-3"
+name = "mlops-project"
 version = "0.1.0"
-description = "Add your description here"
+description = "Team MLOps pipeline with uv, PyTorch, W&B, S3, and SQS"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "matplotlib>=3.10.8",
-    "numpy>=2.4.2",
-    "pandas>=3.0.1",
-    "python-dotenv>=1.2.1",
-    "scikit-learn>=1.8.0",
-    "seaborn>=0.13.2",
-    "torch>=2.10.0",
-    "tqdm>=4.67.3",
-    "wandb>=0.25.0",
+  "boto3>=1.37.0",
+  "matplotlib>=3.10.8",
+  "numpy>=2.4.2",
+  "pandas>=2.2.0",
+  "pydantic>=2.10.0",
+  "pydantic-settings>=2.7.0",
+  "python-dotenv>=1.0.1",
+  "scikit-learn>=1.6.0",
+  "seaborn>=0.13.2",
+  "torch>=2.6.0",
+  "tqdm>=4.67.3",
+  "wandb>=0.19.0",
 ]
+
+[dependency-groups]
+dev = [
+  "mypy>=1.14.0",
+  "pytest>=8.3.0",
+  "ruff>=0.9.0",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
