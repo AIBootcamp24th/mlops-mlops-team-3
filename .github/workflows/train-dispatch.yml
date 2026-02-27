@@ -1,0 +1,56 @@
+name: Train Dispatch
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 2 * * *"
+
+jobs:
+  dispatch-train-message:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v3
+
+      - name: Install dependencies
+        run: uv sync --all-extras --dev
+
+      - name: Send SQS train message
+        run: uv run python scripts/send_sqs_message.py
+        env:
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          TRAIN_QUEUE_URL: ${{ secrets.TRAIN_QUEUE_URL }}
+
+  notify-success:
+    if: ${{ success() }}
+    needs: [dispatch-train-message]
+    uses: ./.github/workflows/notify.yml
+    with:
+      status: success
+      title: "Train Dispatch 성공"
+      message: "SQS 학습 메시지 전송 완료 / 실행 URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+    secrets:
+      SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+      SLACK_CHANNEL_ID: ${{ secrets.SLACK_CHANNEL_ID }}
+
+  notify-failure:
+    if: ${{ failure() }}
+    needs: [dispatch-train-message]
+    uses: ./.github/workflows/notify.yml
+    with:
+      status: failure
+      title: "Train Dispatch 실패"
+      message: "SQS 학습 메시지 전송 실패 / 실행 URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+    secrets:
+      SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+      SLACK_CHANNEL_ID: ${{ secrets.SLACK_CHANNEL_ID }}

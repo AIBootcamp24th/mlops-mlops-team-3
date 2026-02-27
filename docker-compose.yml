@@ -1,0 +1,10 @@
+services:
+  trainer-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: mlops-trainer-worker
+    env_file:
+      - .env
+    command: ["uv", "run", "python", "-m", "src.train.run_train"]
+    restart: unless-stopped
