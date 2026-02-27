@@ -1,12 +1,3 @@
----
-name: Sprint Log
-about: 프로젝트 이슈 탬플릿
-title: ''
-labels: ''
-assignees: ''
-
----
-
 ## Desription
 - 팀원 모두가 동일한 환경에서 작업할 수 있도록 표준 개발 환경을 구축.
 - TMDB 평점 예측을 위해 어떤 데이터가 핵심인지 분석하고 기록.
