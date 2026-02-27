@@ -87,3 +87,8 @@ python -m src.train.run_train
 - 실험 추적: epoch별 `train_loss`, `val_rmse`
 - 아티팩트: 학습 완료 모델 파일 업로드
 - 모델 관리: `scripts/register_model.py`를 기반으로 팀 정책에 맞는 Registry 로직 추가
+
+## 2. Team Members
+
+- Team 3
+- 문성호, 서지은, 송민석, 송용단, 이재석, 유준우
