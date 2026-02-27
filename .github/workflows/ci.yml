@@ -13,20 +13,22 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Miniconda
-        uses: conda-incubator/setup-miniconda@v3
+      - name: Setup Python
+        uses: actions/setup-python@v5
         with:
-          activate-environment: mlops
-          environment-file: environment.yml
-          auto-activate-base: false
+          python-version: "3.11"
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v3
+
+      - name: Install dependencies
+        run: uv sync --dev
 
       - name: Ruff
-        shell: bash -l {0}
-        run: ruff check .
+        run: uv run ruff check .
 
       - name: Pytest
-        shell: bash -l {0}
-        run: pytest -q
+        run: uv run pytest -q
 
   notify-success:
     if: ${{ success() }}

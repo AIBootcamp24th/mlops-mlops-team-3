@@ -6,5 +6,5 @@ services:
     container_name: mlops-trainer-worker
     env_file:
       - .env
-    command: ["conda", "run", "--no-capture-output", "-n", "mlops", "python", "-m", "src.train.run_train"]
+    command: ["uv", "run", "python", "-m", "src.train.run_train"]
     restart: unless-stopped

@@ -8,7 +8,7 @@
 - 코드 수정 가능 기간: 2026-02-27 ~ 2026-03-11
 - 코드 프리즈: 2026-03-12
 - 최종 발표일: 2026-03-13
-- 기술스택: Python, Miniconda, PyTorch, AWS S3, AWS SQS, W&B, GitHub Actions, Slack Bot
+- 기술스택: Python, uv, PyTorch, AWS S3, AWS SQS, W&B, GitHub Actions, Slack Bot
 
 ## 2. Team Members
 
@@ -24,7 +24,7 @@
 ```mermaid
 graph LR
   A[GitHub Push or Schedule] --> B[GitHub Actions]
-  B --> C[conda env + ruff + pytest]
+  B --> C[uv sync + ruff + pytest]
   B --> D[Train Dispatch]
   D --> E[SQS train-queue]
   E --> F[Python Worker]
@@ -38,17 +38,16 @@ graph LR
   L --> I
 ```
 
-## 4. Quick Start (Miniconda)
+## 4. Quick Start (uv)
 
 ```bash
-conda env create -f environment.yml
-conda activate mlops
+uv sync --dev
 cp .env.example .env
 ```
 
 ## 5. GitHub Actions
 
-- `ci.yml`: Miniconda 기반 lint/test 실행 후 Slack 알림
+- `ci.yml`: uv 기반 lint/test 실행 후 Slack 알림
 - `train-dispatch.yml`: 수동/스케줄로 SQS 학습 메시지 전송 후 Slack 알림
 - `notify.yml`: 재사용 가능한 Slack 커스텀 알림 워크플로우
 
@@ -78,8 +77,7 @@ docker run --rm --env-file .env mlops-trainer-worker:latest
 로컬 학습 워커 실행:
 
 ```bash
-conda activate mlops
-python -m src.train.run_train
+uv run python -m src.train.run_train
 ```
 
 ## 7. W&B Usage Guide
@@ -87,8 +85,3 @@ python -m src.train.run_train
 - 실험 추적: epoch별 `train_loss`, `val_rmse`
 - 아티팩트: 학습 완료 모델 파일 업로드
 - 모델 관리: `scripts/register_model.py`를 기반으로 팀 정책에 맞는 Registry 로직 추가
-
-## 2. Team Members
-
-- Team 3
-- 문성호, 서지은, 송민석, 송용단, 이재석, 유준우

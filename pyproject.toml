@@ -1,7 +1,7 @@
 [project]
 name = "mlops-project"
 version = "0.1.0"
-description = "Team MLOps pipeline with Miniconda, PyTorch, W&B, S3, and SQS"
+description = "Team MLOps pipeline with uv, PyTorch, W&B, S3, and SQS"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
