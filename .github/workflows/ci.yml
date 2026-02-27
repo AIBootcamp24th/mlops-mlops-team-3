@@ -37,7 +37,7 @@ jobs:
     with:
       status: success
       title: "CI 통과했어요!"
-      message: "짜잔! 테스트랑 린트가 모두 성공했어요 ✨ 이벤트: ${{ github.event_name }} | 브랜치: ${{ github.ref_name }} | 커밋: ${{ github.sha }} | 실행 URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+      message: "한줄 요약: CI 통과 ✅ (테스트/린트 성공)\n\n짜잔! 테스트를 모두 성공했어요 ✨\n\n| 항목 | 값 |\n|---|---|\n| 이벤트 | ${{ github.event_name }} |\n| 브랜치 | ${{ github.ref_name }} |\n| 실행 URL | ${{ github.server_url }}/${{ github.repository }}/tree/${{ github.ref_name }} |"
     secrets:
       SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
       SLACK_CHANNEL_ID: ${{ secrets.SLACK_CHANNEL_ID }}
