@@ -8,12 +8,12 @@
 
 ## 2. Team Members
 
-- [유준우(팀장)]("https://github.com/joonwoo-yoo")
-- [문성호]("")
-- [서지은]("https://github.com/jieunseo02")
-- [송민성]("https://github.com/alstjd0051")
-- [송용단]("")
-- [이재석]("https://github.com/wotjrzm")
+- [유준우 (팀장)](https://github.com/joonwoo-yoo)
+- 문성호
+- [서지은](https://github.com/jieunseo02)
+- [송민성](https://github.com/alstjd0051)
+- 송용단
+- [이재석](https://github.com/wotjrzm)
 
 ## 3. Pipeline Architecture
 
