@@ -36,8 +36,8 @@ jobs:
     uses: ./.github/workflows/notify.yml
     with:
       status: success
-      title: "CI 성공"
-      message: "브랜치: ${{ github.ref_name }} / 커밋: ${{ github.sha }}"
+      title: "CI 통과했어요!"
+      message: "짜잔! 테스트랑 린트가 모두 성공했어요 ✨ 이벤트: ${{ github.event_name }} | 브랜치: ${{ github.ref_name }} | 커밋: ${{ github.sha }} | 실행 URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
     secrets:
       SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
       SLACK_CHANNEL_ID: ${{ secrets.SLACK_CHANNEL_ID }}
@@ -48,8 +48,8 @@ jobs:
     uses: ./.github/workflows/notify.yml
     with:
       status: failure
-      title: "CI 실패"
-      message: "브랜치: ${{ github.ref_name }} / 실행 URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+      title: "CI가 잠깐 넘어졌어요"
+      message: "앗, 이번엔 실패했어요 🥲 로그에서 원인을 같이 찾아봐요! 이벤트: ${{ github.event_name }} | 브랜치: ${{ github.ref_name }} | 실행 URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
     secrets:
       SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
       SLACK_CHANNEL_ID: ${{ secrets.SLACK_CHANNEL_ID }}

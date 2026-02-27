@@ -29,7 +29,8 @@ jobs:
         run: bunx --bun node -e "JSON.parse(require('node:fs').readFileSync('manifest.json', 'utf8')); console.log('manifest.json is valid')"
 
       - name: Notify smoke test (real Slack send)
-        run: bun run notify "CI smoke test (PR #${{ github.event.pull_request.number }})"
+        run: |
+          bun run notify "CI smoke test (PR #${{ github.event.pull_request.number }})"
         env:
           SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
           SLACK_SIGNING_SECRET: ${{ secrets.SLACK_SIGNING_SECRET }}
