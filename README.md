@@ -1,1 +1,7 @@
-[![Review Assignment Due Date](https://classroom.github.com/assets/deadline-readme-button-22041afd0340ce965d47ae6ef1cefeee28c7c493a6346c4f15d667ab976d596c.svg)](https://classroom.github.com/a/x_ji_VNX)
+## 1. Project Overview 
+- 주제: TMDB 데이터를 활용한 영화 평점 예측 서비스 개발 및 MLOps 파이프라인 구축
+- 목표: 영화의 특성 기반으로 평점을 예측하고 이를 지속적으로 학습 및 배포하는 MLOps 파이프라인 구축
+
+## 2. Team Members 
+- Team 3
+- 문성호, 서지은, 송민석, 송용단, 이재석, 유준우
