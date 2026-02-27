@@ -1,23 +1,13 @@
-FROM python:3.11-slim
+FROM continuumio/miniconda3:24.11.1-0
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    UV_LINK_MODE=copy
+    PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl \
-    ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
-
-# Install uv
-RUN curl -LsSf https://astral.sh/uv/install.sh | sh
-ENV PATH="/root/.local/bin:${PATH}"
-
 # Install dependencies first for Docker layer caching
-COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen --no-dev
+COPY environment.yml ./
+RUN conda env create -f environment.yml && conda clean -afy
 
 # Copy project files
 COPY src ./src
@@ -25,4 +15,4 @@ COPY scripts ./scripts
 COPY README.md ./
 
 # Default: run SQS-driven training worker
-CMD ["uv", "run", "python", "-m", "src.train.run_train"]
+CMD ["conda", "run", "--no-capture-output", "-n", "mlops", "python", "-m", "src.train.run_train"]

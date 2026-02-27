@@ -12,19 +12,16 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - name: Setup Miniconda
+        uses: conda-incubator/setup-miniconda@v3
         with:
-          python-version: "3.11"
-
-      - name: Setup uv
-        uses: astral-sh/setup-uv@v3
-
-      - name: Install dependencies
-        run: uv sync --all-extras --dev
+          activate-environment: mlops
+          environment-file: environment.yml
+          auto-activate-base: false
 
       - name: Send SQS train message
-        run: uv run python scripts/send_sqs_message.py
+        shell: bash -l {0}
+        run: python scripts/send_sqs_message.py
         env:
           AWS_REGION: ${{ secrets.AWS_REGION }}
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}

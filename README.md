@@ -4,7 +4,11 @@
 
 - 주제: TMDB 데이터를 활용한 영화 평점 예측 서비스 및 MLOps 파이프라인 구축
 - 목표: 영화 메타데이터를 기반으로 평점을 예측하고, 학습/배포/모니터링을 자동화
-- 기술스택: Python, uv, PyTorch, AWS S3, AWS SQS, W&B, GitHub Actions, Slack Bot
+- 프로젝트 기간: 2026-02-27 ~ 2026-03-13
+- 코드 수정 가능 기간: 2026-02-27 ~ 2026-03-11
+- 코드 프리즈: 2026-03-12
+- 최종 발표일: 2026-03-13
+- 기술스택: Python, Miniconda, PyTorch, AWS S3, AWS SQS, W&B, GitHub Actions, Slack Bot
 
 ## 2. Team Members
 
@@ -20,7 +24,7 @@
 ```mermaid
 graph LR
   A[GitHub Push or Schedule] --> B[GitHub Actions]
-  B --> C[uv sync + ruff + pytest]
+  B --> C[conda env + ruff + pytest]
   B --> D[Train Dispatch]
   D --> E[SQS train-queue]
   E --> F[Python Worker]
@@ -34,16 +38,17 @@ graph LR
   L --> I
 ```
 
-## 4. Quick Start (uv)
+## 4. Quick Start (Miniconda)
 
 ```bash
-uv sync --dev
+conda env create -f environment.yml
+conda activate mlops
 cp .env.example .env
 ```
 
 ## 5. GitHub Actions
 
-- `ci.yml`: `uv` 기반 lint/test 실행 후 Slack 알림
+- `ci.yml`: Miniconda 기반 lint/test 실행 후 Slack 알림
 - `train-dispatch.yml`: 수동/스케줄로 SQS 학습 메시지 전송 후 Slack 알림
 - `notify.yml`: 재사용 가능한 Slack 커스텀 알림 워크플로우
 
@@ -70,8 +75,15 @@ docker build -t mlops-trainer-worker:latest .
 docker run --rm --env-file .env mlops-trainer-worker:latest
 ```
 
+로컬 학습 워커 실행:
+
+```bash
+conda activate mlops
+python -m src.train.run_train
+```
+
 ## 7. W&B Usage Guide
 
 - 실험 추적: epoch별 `train_loss`, `val_rmse`
 - 아티팩트: 학습 완료 모델 파일 업로드
-- 모델 관리: `scripts/register_model.py`를 기반으로 팀 정책에 맞는 Registry 승격 로직 추가
+- 모델 관리: `scripts/register_model.py`를 기반으로 팀 정책에 맞는 Registry 로직 추가
