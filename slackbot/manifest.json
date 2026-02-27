@@ -1,0 +1,38 @@
+{
+  "_metadata": {
+    "major_version": 1,
+    "minor_version": 1
+  },
+  "display_information": {
+    "name": "monitor-bot"
+  },
+  "features": {
+    "bot_user": {
+      "display_name": "monitor-bot",
+      "always_online": false
+    },
+    "slash_commands": [
+      {
+        "command": "/mlops-alert",
+        "description": "3조 채널 전용 알림 전송",
+        "should_escape": false
+      }
+    ]
+  },
+  "oauth_config": {
+    "scopes": {
+      "bot": [
+        "chat:write",
+        "commands"
+      ]
+    }
+  },
+  "settings": {
+    "interactivity": {
+      "is_enabled": true
+    },
+    "org_deploy_enabled": false,
+    "socket_mode_enabled": true,
+    "token_rotation_enabled": false
+  }
+}
