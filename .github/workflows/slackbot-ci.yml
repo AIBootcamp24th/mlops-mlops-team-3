@@ -1,14 +1,13 @@
 name: Slackbot CI
 
 on:
-  pull_request:
-    branches: [main]
-    paths:
-      - "slackbot/**"
-      - ".github/workflows/slackbot-ci.yml"
+  # 소비 절감을 위해 자동 CI 트리거를 중단합니다.
+  workflow_dispatch:
 
 jobs:
   validate:
+    # Slack 알림 전송을 포함한 워크플로우를 잠시 비활성화합니다.
+    if: ${{ false }}
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -28,11 +27,11 @@ jobs:
       - name: Validate Slack manifest JSON
         run: bunx --bun node -e "JSON.parse(require('node:fs').readFileSync('manifest.json', 'utf8')); console.log('manifest.json is valid')"
 
-      - name: Notify smoke test (real Slack send)
-        run: |
-          bun run notify "CI smoke test (PR #${{ github.event.pull_request.number }})"
-        env:
-          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
-          SLACK_SIGNING_SECRET: ${{ secrets.SLACK_SIGNING_SECRET }}
-          SLACK_APP_TOKEN: ${{ secrets.SLACK_APP_TOKEN }}
-          SLACK_CHANNEL_ID: ${{ secrets.SLACK_CHANNEL_ID }}
+      # - name: Notify smoke test (real Slack send)
+      #   run: |
+      #     bun run notify "CI smoke test"
+      #   env:
+      #     SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+      #     SLACK_SIGNING_SECRET: ${{ secrets.SLACK_SIGNING_SECRET }}
+      #     SLACK_APP_TOKEN: ${{ secrets.SLACK_APP_TOKEN }}
+      #     SLACK_CHANNEL_ID: ${{ secrets.SLACK_CHANNEL_ID }}
