@@ -45,6 +45,13 @@ uv sync --dev
 cp .env.example .env
 ```
 
+### 4-1. 환경변수 규칙 (큐 전략)
+
+- S3는 `infra` 기준 단일 버킷을 사용하므로 `AWS_S3_RAW_BUCKET`, `AWS_S3_MODEL_BUCKET`, `AWS_S3_PRED_BUCKET` 값은 동일합니다.
+- 기본 큐 전략은 분리 운영이며, 학습은 `TRAIN_QUEUE_URL`, 배치추론은 `INFER_QUEUE_URL`을 사용합니다.
+- 단일 큐로 운영하려면 `INFER_QUEUE_URL`에 `TRAIN_QUEUE_URL`과 동일한 값을 넣어 사용할 수 있습니다. (코드 fallback 지원)
+- `API_MODEL_S3_KEY`는 API/배치추론에서 사용할 기본 모델 경로입니다. (예: `models/latest/rating_model.pt`)
+
 ## 5. GitHub Actions
 
 - `ci.yml`: uv 기반 lint/test 실행 후 Slack 알림
