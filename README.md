@@ -16,7 +16,7 @@
 - 문성호
 - [서지은](https://github.com/jieunseo02)
 - [송민성](https://github.com/alstjd0051)
-- 송용단
+- [송용단](https://github.com/totalintelli)
 - [이재석](https://github.com/wotjrzm)
 
 ## 3. Pipeline Architecture
