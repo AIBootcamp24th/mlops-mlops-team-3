@@ -1,0 +1,23 @@
+# dependencies
+node_modules
+
+# outputs
+out
+dist
+*.tgz
+
+# logs
+logs
+*.log
+
+# env files
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# caches
+.eslintcache
+.cache
+*.tsbuildinfo

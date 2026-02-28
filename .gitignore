@@ -184,6 +184,9 @@ celerybeat.pid
 
 # Environments
 .env
+remote.env
+
+# 원격 서버 연결 정보 (보안)
 .venv
 env/
 venv/
@@ -298,3 +301,4 @@ $RECYCLE.BIN/
 *.lnk
 
 # End of https://www.toptal.com/developers/gitignore/api/windows,macos,linux,python,jupyternotebooks,vim,visualstudiocode
+node_modules/
