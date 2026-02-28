@@ -1,0 +1,37 @@
+name: Slackbot CD Notify
+
+on:
+  workflow_dispatch:
+    inputs:
+      message:
+        description: "Slack channel message"
+        required: true
+        default: "slackbot 배포 알림 테스트"
+
+jobs:
+  notify:
+    # Slack 알림 완전 중단을 위해 워크플로우를 잠시 비활성화합니다.
+    if: ${{ false }}
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: slackbot
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Send Slack notification
+        run: bun run notify "${{ github.event.inputs.message }}"
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_SIGNING_SECRET: ${{ secrets.SLACK_SIGNING_SECRET }}
+          SLACK_APP_TOKEN: ${{ secrets.SLACK_APP_TOKEN }}
+          SLACK_CHANNEL_ID: ${{ secrets.SLACK_CHANNEL_ID }}
