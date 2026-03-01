@@ -23,19 +23,26 @@
 
 ```mermaid
 graph LR
-  A[GitHub Push or Schedule] --> B[GitHub Actions]
-  B --> C[uv sync + ruff + pytest]
-  B --> D[Train Dispatch]
-  D --> E[SQS train-queue]
-  E --> F[Python Worker]
-  F --> G[S3 Raw Data Download]
-  F --> H[PyTorch Training]
-  H --> I[W&B Logging and Artifact]
-  H --> J[S3 Model Upload]
-  F --> K[Slack Custom Notification]
-  L[Batch Inference Worker] --> J
-  L --> M[S3 Prediction Output]
-  L --> I
+  codePush[GitHubPushOrPR] --> ciWorkflow[CIWorkflow]
+  ciWorkflow --> ciChecks[uvSyncRuffPytest]
+
+  trainSchedule[TrainScheduleOrManual] --> trainDispatch[TrainDispatchWorkflow]
+  trainDispatch --> trainQueue[SQSTrainQueue]
+  trainQueue --> trainerWorker[TrainerWorker]
+  trainerWorker --> trainData[S3RawDataDownload]
+  trainerWorker --> trainLoop[PyTorchTraining]
+  trainLoop --> wandbLog[WandbMetrics]
+  trainLoop --> modelUpload[S3ModelUpload]
+  trainLoop --> metadataUpload[TrainingMetadataUpload]
+
+  inferSchedule[BatchInferScheduleOrManual] --> inferWorkflow[BatchInferenceWorkflow]
+  inferWorkflow --> modelSelect[SelectModelFromWandb]
+  modelSelect --> batchRunner[BatchInferenceRunner]
+  batchRunner --> predUpload[S3PredictionUpload]
+
+  trainDispatch --> slackNotify[SlackNotify]
+  inferWorkflow --> slackNotify
+  ciWorkflow --> slackNotify
 ```
 
 ## 4. Quick Start (uv)
@@ -49,30 +56,39 @@ cp .env.example .env
 
 - `ci.yml`: uv 기반 lint/test 실행 후 Slack 알림
 - `train-dispatch.yml`: 수동/스케줄로 SQS 학습 메시지 전송 후 Slack 알림
+- `batch-infer.yml`: W&B에서 배치 추론 대상 모델 자동 선택 후 S3 예측 결과 생성
 - `notify.yml`: 재사용 가능한 Slack 커스텀 알림 워크플로우
 
-## 6. 예측 API 서비스
-
-영화 메타데이터(budget, runtime, popularity, vote_count)를 기반으로 평점을 예측하는 REST API입니다.
+## 6. 학습 실행
 
 ```bash
-# API 서버 실행
-uv run uvicorn src.api.main:app --host 0.0.0.0 --port 8000
+# 로컬 학습 워커 실행
+uv run python -m src.train.run_train
 ```
 
-- `GET /health` - 헬스체크
-- `POST /predict` - 단일 영화 평점 예측
-- `POST /predict/batch` - 배치 예측
+학습 결과:
 
-예시:
+- 모델 파일: `s3://<AWS_S3_MODEL_BUCKET>/models/{run_id}/rating_model.pt`
+- 메타데이터: `s3://<AWS_S3_MODEL_BUCKET>/models/{run_id}/training_metadata.json`
+- W&B summary: `model_uri`, `val_rmse`, `feature_cols`, `metadata_uri`
+
+## 7. 배치 추론 실행
 
 ```bash
-curl -X POST http://localhost:8000/predict \
-  -H "Content-Type: application/json" \
-  -d '{"budget": 100000000, "runtime": 120, "popularity": 25.5, "vote_count": 5000}'
+# 배치 추론 CLI 실행
+uv run python -m src.infer.run_batch_infer \
+  --model-s3-key models/<run_id>/rating_model.pt \
+  --input-s3-key tmdb/latest/train.csv \
+  --output-s3-key predictions/tmdb/local/predictions.csv \
+  --feature-cols budget,runtime,popularity,vote_count
 ```
 
-## 7. Docker 실행
+GitHub Actions 자동화:
+
+- `batch-infer.yml`을 수동 실행하거나 스케줄에 따라 실행
+- 워크플로우가 최신 성능 모델을 W&B에서 선택하고, S3에 예측 결과를 저장
+
+## 8. Docker 실행
 
 ```bash
 # 1) 환경변수 준비
@@ -81,33 +97,18 @@ curl -X POST http://localhost:8000/predict \
 # 2) 이미지 빌드
 docker compose build
 
-# 3) 학습 워커 + API 서비스 실행
-docker compose up -d
-
-# 로그 확인
-docker compose logs -f trainer-worker
-docker compose logs -f api
+# 3) 학습 워커 실행
+docker compose run --rm trainer-worker
 ```
 
 개별 실행:
 
 ```bash
-# 학습 워커
 docker build -t mlops-trainer-worker:latest .
 docker run --rm --env-file .env mlops-trainer-worker:latest
-
-# API 서비스
-docker run --rm -p 8000:8000 --env-file .env mlops-trainer-worker:latest \
-  uv run uvicorn src.api.main:app --host 0.0.0.0 --port 8000
 ```
 
-로컬 학습 워커 실행:
-
-```bash
-uv run python -m src.train.run_train
-```
-
-## 8. 원격 GPU 학습
+## 9. 원격 GPU 학습
 
 GPU가 있는 원격 서버에서 학습을 실행하려면:
 
@@ -126,8 +127,12 @@ cp remote.env.example remote.env
 
 자세한 내용은 [docs/remote-gpu-training.md](docs/remote-gpu-training.md)를 참고하세요.
 
-## 9. W&B Usage Guide
+## 10. W&B Usage Guide
 
 - 실험 추적: epoch별 `train_loss`, `val_rmse`
-- 아티팩트: 학습 완료 모델 파일 업로드
-- 모델 관리: `scripts/register_model.py`를 기반으로 팀 정책에 맞는 Registry 로직 추가
+- 아티팩트: 학습 완료 모델 파일 및 메타데이터 업로드
+- 모델 선택: `uv run python scripts/register_model.py --output-json selected_model.json`
+
+## 11. 향후 확장
+
+- REST API 서빙(`src/api`)은 현재 저장소에 미구현 상태이며, 배치 추론 자동화 이후 단계로 분리 운영

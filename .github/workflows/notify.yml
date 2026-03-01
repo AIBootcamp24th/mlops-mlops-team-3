@@ -32,8 +32,10 @@ jobs:
         run: |
           if [ "$STATUS" = "success" ]; then
             COLOR="good"
+            STATUS_EMOJI=":white_check_mark:"
           else
             COLOR="danger"
+            STATUS_EMOJI=":x:"
           fi
 
           PAYLOAD=$(cat <<EOF
@@ -43,14 +45,45 @@ jobs:
               {
                 "color": "${COLOR}",
                 "title": "${TITLE}",
-                "text": "${MESSAGE}"
+                "text": "${MESSAGE}",
+                "mrkdwn_in": ["text", "fields"],
+                "fields": [
+                  {
+                    "title": "Status",
+                    "value": "${STATUS_EMOJI} ${STATUS}",
+                    "short": true
+                  },
+                  {
+                    "title": "Repository",
+                    "value": "${{ github.repository }}",
+                    "short": true
+                  },
+                  {
+                    "title": "Branch",
+                    "value": "${{ github.ref_name }}",
+                    "short": true
+                  },
+                  {
+                    "title": "Workflow",
+                    "value": "${{ github.workflow }}",
+                    "short": true
+                  },
+                  {
+                    "title": "Run",
+                    "value": "<${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|Actions 바로가기>",
+                    "short": false
+                  }
+                ]
               }
             ]
           }
           EOF
           )
 
-          curl -sS -X POST https://slack.com/api/chat.postMessage \
+          response=$(curl -sS -X POST https://slack.com/api/chat.postMessage \
             -H "Authorization: Bearer ${SLACK_BOT_TOKEN}" \
             -H "Content-Type: application/json; charset=utf-8" \
-            --data "${PAYLOAD}"
+            --data "${PAYLOAD}")
+
+          echo "$response"
+          echo "$response" | grep -q '"ok":true'

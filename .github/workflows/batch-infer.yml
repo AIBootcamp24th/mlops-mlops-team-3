@@ -1,0 +1,125 @@
+name: Batch Inference Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      input_s3_key:
+        description: "원천 버킷의 입력 CSV 키"
+        required: true
+        default: "tmdb/latest/train.csv"
+      output_prefix:
+        description: "예측 결과 저장 prefix"
+        required: true
+        default: "predictions/tmdb"
+  schedule:
+    - cron: "30 2 * * *"
+
+jobs:
+  run-batch-infer:
+    runs-on: ubuntu-latest
+    outputs:
+      model_s3_key: ${{ steps.export-result.outputs.model_s3_key }}
+      output_s3_key: ${{ steps.export-result.outputs.output_s3_key }}
+      output_uri: ${{ steps.export-result.outputs.output_uri }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v3
+
+      - name: Install dependencies
+        run: uv sync --dev
+
+      - name: Select model candidate from W&B
+        run: uv run python scripts/register_model.py --output-json selected_model.json
+        env:
+          WANDB_API_KEY: ${{ secrets.WANDB_API_KEY }}
+          WANDB_PROJECT: ${{ secrets.WANDB_PROJECT }}
+          WANDB_ENTITY: ${{ secrets.WANDB_ENTITY }}
+
+      - name: Resolve runtime parameters
+        run: |
+          uv run python - <<'PY'
+          import json
+          import os
+          from datetime import UTC, datetime
+          from pathlib import Path
+
+          selected = json.loads(Path("selected_model.json").read_text(encoding="utf-8"))
+          event = json.loads("""${{ toJson(github.event) }}""")
+          inputs = event.get("inputs", {})
+
+          input_s3_key = inputs.get("input_s3_key") or "tmdb/latest/train.csv"
+          output_prefix = inputs.get("output_prefix") or "predictions/tmdb"
+          timestamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
+          output_s3_key = f"{output_prefix}/{timestamp}/predictions.csv"
+
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as env_file:
+              env_file.write(f"MODEL_S3_KEY={selected['model_s3_key']}\n")
+              env_file.write(f"FEATURE_COLS_CSV={','.join(selected['feature_cols'])}\n")
+              env_file.write(f"INPUT_S3_KEY={input_s3_key}\n")
+              env_file.write(f"OUTPUT_S3_KEY={output_s3_key}\n")
+          PY
+
+      - name: Run batch inference
+        run: |
+          uv run python -m src.infer.run_batch_infer \
+            --model-s3-key "${MODEL_S3_KEY}" \
+            --input-s3-key "${INPUT_S3_KEY}" \
+            --output-s3-key "${OUTPUT_S3_KEY}" \
+            --feature-cols "${FEATURE_COLS_CSV}" > infer_result.json
+        env:
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_S3_RAW_BUCKET: ${{ secrets.AWS_S3_RAW_BUCKET }}
+          AWS_S3_MODEL_BUCKET: ${{ secrets.AWS_S3_MODEL_BUCKET }}
+          AWS_S3_PRED_BUCKET: ${{ secrets.AWS_S3_PRED_BUCKET }}
+
+      - name: Export inference outputs
+        id: export-result
+        run: |
+          uv run python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          result = json.loads(Path("infer_result.json").read_text(encoding="utf-8"))
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output_file:
+              output_file.write(f"model_s3_key={result['model_s3_key']}\n")
+              output_file.write(f"output_s3_key={result['output_s3_key']}\n")
+              output_file.write(f"output_uri={result['output_uri']}\n")
+          PY
+
+  notify-success:
+    if: ${{ success() }}
+    needs: [run-batch-infer]
+    uses: ./.github/workflows/notify.yml
+    with:
+      status: success
+      title: "Batch Inference 성공"
+      message: |
+        *모델 키* `${{ needs.run-batch-infer.outputs.model_s3_key }}`
+        *출력 키* `${{ needs.run-batch-infer.outputs.output_s3_key }}`
+        *출력 URI* `${{ needs.run-batch-infer.outputs.output_uri }}`
+    secrets:
+      SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+      SLACK_CHANNEL_ID: ${{ secrets.SLACK_CHANNEL_ID }}
+
+  notify-failure:
+    if: ${{ failure() }}
+    needs: [run-batch-infer]
+    uses: ./.github/workflows/notify.yml
+    with:
+      status: failure
+      title: "Batch Inference 실패"
+      message: "배치 추론 실행 중 오류가 발생했습니다. Actions 로그를 확인해주세요."
+    secrets:
+      SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+      SLACK_CHANNEL_ID: ${{ secrets.SLACK_CHANNEL_ID }}

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from datetime import UTC, datetime
 from typing import Any
 
 import pandas as pd
@@ -27,6 +28,32 @@ def _load_payload() -> dict[str, Any]:
     payload = json.loads(message["Body"])
     payload["_receipt_handle"] = message["ReceiptHandle"]
     return payload
+
+
+def build_training_metadata(
+    *,
+    run_id: str,
+    model_uri: str,
+    val_rmse: float,
+    feature_cols: list[str],
+    target_col: str,
+    train_s3_key: str,
+    epochs: int,
+    batch_size: int,
+    learning_rate: float,
+) -> dict[str, Any]:
+    return {
+        "run_id": run_id,
+        "model_uri": model_uri,
+        "val_rmse": float(val_rmse),
+        "feature_cols": feature_cols,
+        "target_col": target_col,
+        "train_s3_key": train_s3_key,
+        "epochs": epochs,
+        "batch_size": batch_size,
+        "learning_rate": learning_rate,
+        "created_at": datetime.now(UTC).isoformat(),
+    }
 
 
 def main() -> None:
@@ -63,10 +90,12 @@ def main() -> None:
         model = RatingRegressor(input_dim=len(feature_cols))
         optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
 
+        final_val_rmse = float("inf")
         for epoch in range(1, epochs + 1):
             train_loss = train_one_epoch(model, train_loader, optimizer)
             val_rmse = evaluate(model, val_loader)
             run.log({"epoch": epoch, "train_loss": train_loss, "val_rmse": val_rmse})
+            final_val_rmse = val_rmse
 
         model_path = str(Path(tmpdir) / "rating_model.pt")
         torch.save(model.state_dict(), model_path)
@@ -74,10 +103,32 @@ def main() -> None:
         model_key = f"models/{run.id}/rating_model.pt"
         model_uri = upload_file(model_path, settings.aws_s3_model_bucket, model_key)
         run.summary["model_uri"] = model_uri
+        run.summary["val_rmse"] = final_val_rmse
+        run.summary["feature_cols"] = feature_cols
+        run.summary["target_col"] = target_col
 
         artifact = wandb.Artifact(name=f"rating-model-{run.id}", type="model")
         artifact.add_file(model_path)
         run.log_artifact(artifact)
+
+        metadata = build_training_metadata(
+            run_id=run.id,
+            model_uri=model_uri,
+            val_rmse=final_val_rmse,
+            feature_cols=feature_cols,
+            target_col=target_col,
+            train_s3_key=s3_key,
+            epochs=epochs,
+            batch_size=batch_size,
+            learning_rate=learning_rate,
+        )
+        metadata_path = str(Path(tmpdir) / "training_metadata.json")
+        with open(metadata_path, "w", encoding="utf-8") as fp:
+            json.dump(metadata, fp, ensure_ascii=False, indent=2)
+
+        metadata_key = f"models/{run.id}/training_metadata.json"
+        metadata_uri = upload_file(metadata_path, settings.aws_s3_model_bucket, metadata_key)
+        run.summary["metadata_uri"] = metadata_uri
 
     delete_message(settings.train_queue_url, payload["_receipt_handle"])
     run.finish()
