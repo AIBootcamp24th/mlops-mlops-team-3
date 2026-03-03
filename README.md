@@ -8,7 +8,7 @@
 - 코드 수정 가능 기간: 2026-02-27 ~ 2026-03-11 (의논 후 결정)
 - 코드 프리즈: 2026-03-12(의논 후 결정)
 - 최종 발표일: 2026-03-13
-- 기술스택: Python, uv, PyTorch, AWS S3, AWS SQS, W&B, GitHub Actions, Slack Bot
+- 기술스택: Python, uv, PyTorch, AWS S3, AWS SQS, W&B, GitHub Actions, Slack Bot, Docker
 
 ## 2. Team Members
 
@@ -118,15 +118,14 @@ docker compose logs -f api
 
 개별 실행:
 
-```bash
+````bash
 # 학습 워커
 docker build -t mlops-trainer-worker:latest .
 docker run --rm --env-file .env mlops-trainer-worker:latest
 
-# API 서비스
-docker run --rm -p 8000:8000 --env-file .env mlops-trainer-worker:latest \
-  uv run uvicorn src.api.main:app --host 0.0.0.0 --port 8000
-```
+```bash
+docker compose down
+````
 
 로컬 학습 워커 실행:
 
