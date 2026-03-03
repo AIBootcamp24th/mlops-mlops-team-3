@@ -54,27 +54,6 @@ cp .env.example .env
 - `ec2-scheduled-control.yml`: 평일 KST 10시/23시 EC2 시작/중단 자동화
 - `ec2-anomaly-cost-alert.yml`: 10분 단위 이상 징후(고CPU/디스크 부족 위험/헬스체크 실패) 탐지 + 일일 저사용 비용 최적화 후보 알림
 
-### 5-1. EC2 모니터링 알림 설정값
-
-필수 GitHub Secrets:
-
-- `AWS_ACCESS_KEY_ID`
-- `AWS_SECRET_ACCESS_KEY`
-- `AWS_REGION`
-- `SLACK_BOT_TOKEN`
-- `SLACK_CHANNEL_ID`
-
-선택 GitHub Secrets:
-
-- `ALERT_SNS_TOPIC_ARN` (설정 시 Slack + 이메일(SNS 구독) 동시 통지)
-
-선택 GitHub Variables:
-
-- `EC2_CPU_SPIKE_THRESHOLD` (기본값: `85`)
-- `EC2_DISK_USED_THRESHOLD` (기본값: `85`)
-- `EC2_LOW_CPU_THRESHOLD` (기본값: `5`)
-- `EC2_LOW_CPU_DAYS` (기본값: `7`)
-
 ## 6. 예측 API 서비스
 
 영화 메타데이터(budget, runtime, popularity, vote_count)를 기반으로 평점을 예측하는 REST API입니다.
