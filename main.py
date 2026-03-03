@@ -9,7 +9,7 @@ def main():
 
 def train():
     wandb.init(
-        entity="mlops-team-3",
+        entity="mlops-team3",
         project="TMDB-rating-prediction",
         name="initial-test-run",
         config={"epochs": 10, "learning_rate": 0.01, "batch_size": 32},
