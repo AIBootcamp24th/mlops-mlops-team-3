@@ -1,17 +1,23 @@
-name: Slackbot CD Notify
+name: Slackbot Maintenance
 
 on:
   workflow_dispatch:
     inputs:
-      message:
-        description: "Slack channel message"
+      task:
+        description: "실행 작업 선택"
         required: true
-        default: "slackbot 배포 알림 테스트"
+        default: validate
+        type: choice
+        options:
+          - validate
+          - notify
+      message:
+        description: "task=notify일 때 전송할 Slack 메시지"
+        required: false
+        default: "slackbot 수동 알림 테스트"
 
 jobs:
-  notify:
-    # Slack 알림 완전 중단을 위해 워크플로우를 잠시 비활성화합니다.
-    if: ${{ false }}
+  slackbot:
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -26,9 +32,14 @@ jobs:
           bun-version: latest
 
       - name: Install dependencies
-        run: bun install
+        run: bun install --frozen-lockfile
+
+      - name: Validate Slack manifest JSON
+        if: ${{ github.event.inputs.task == 'validate' }}
+        run: bunx --bun node -e "JSON.parse(require('node:fs').readFileSync('manifest.json', 'utf8')); console.log('manifest.json is valid')"
 
       - name: Send Slack notification
+        if: ${{ github.event.inputs.task == 'notify' }}
         run: bun run notify "${{ github.event.inputs.message }}"
         env:
           SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}

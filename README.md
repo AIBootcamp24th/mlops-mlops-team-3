@@ -47,14 +47,29 @@ cp .env.example .env
 
 ## 5. GitHub Actions
 
-- `ci.yml`: uv 기반 lint/test 실행 후 Slack 알림
-- `train-dispatch.yml`: 수동/스케줄로 SQS 학습 메시지 전송 후 Slack 알림
-- `notify.yml`: 재사용 가능한 Slack 커스텀 알림 워크플로우
-- `ec2-monitoring-daily.yml`: 매일 EC2 인스턴스 현황 집계 후 Slack 알림
+- `ci.yml`: uv 기반 lint/test 수동 실행 워크플로우
+- `train-dispatch.yml`: SQS 학습 메시지 디스패치 워크플로우(현재 안전을 위해 비활성)
 - `ec2-scheduled-control.yml`: 평일 KST 10시/23시 EC2 시작/중단 자동화
-- `ec2-anomaly-cost-alert.yml`: 10분 단위 이상 징후(고CPU/디스크 부족 위험/헬스체크 실패) 탐지 + 일일 저사용 비용 최적화 후보 알림
+- `ec2-anomaly-cost-alert.yml`: 10분 단위 이상 징후 탐지 + 일일 인벤토리/저사용 비용 최적화 알림 통합 워크플로우
+- `pr-merge-pull-reminder.yml`: PR 머지 시 Slack에 pull 리마인더 전송
+- `slackbot-maintenance.yml`: Slackbot 수동 유지보수(매니페스트 검증/테스트 알림) 통합 워크플로우
 
-### 5-1. EC2 모니터링 알림 설정값
+### 5-1. EC2 통합 모니터링 워크플로우 실행 모드
+
+`ec2-anomaly-cost-alert.yml`는 하나의 파일에서 세 가지 운영 모드를 제공합니다.
+
+- `realtime`: 10분 단위 이상 징후 탐지 (CPU 급등/디스크 사용 위험/헬스체크 실패)
+- `daily`: 매일 KST 10:00 EC2 인벤토리(전체/상태별/리전별 상세) 보고
+- `cost`: 매일 KST 10:10 저사용 인스턴스(평균 CPU 기준) 비용 최적화 후보 보고
+- `all`: 수동 실행 시 `realtime + daily + cost`를 한 번에 점검
+
+수동 테스트 예시(GitHub CLI):
+
+```bash
+gh workflow run "EC2 Anomaly and Cost Alert" --ref main -f mode=all
+```
+
+### 5-2. EC2 모니터링 알림 설정값
 
 필수 GitHub Secrets:
 

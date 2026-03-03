@@ -1,0 +1,58 @@
+name: PR Merge Pull Reminder
+
+on:
+  pull_request:
+    types:
+      - closed
+
+permissions:
+  contents: read
+
+jobs:
+  notify-pull-reminder:
+    if: ${{ github.event.pull_request.merged == true }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send Slack pull reminder
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_CHANNEL_ID: ${{ secrets.SLACK_CHANNEL_ID }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          MERGED_BY: ${{ github.event.pull_request.merged_by.login }}
+        run: |
+          payload=$(python - <<'PY'
+          import json
+          import os
+
+          message = (
+              "[PR 머지 알림]\n"
+              f"- PR #{os.environ['PR_NUMBER']} 머지 완료\n"
+              f"- 제목: {os.environ['PR_TITLE']}\n"
+              f"- 머지한 사람: {os.environ['MERGED_BY']}\n"
+              f"- 링크: {os.environ['PR_URL']}\n"
+              "- pull해주세요."
+          )
+
+          print(
+              json.dumps(
+                  {
+                      "channel": os.environ["SLACK_CHANNEL_ID"],
+                      "attachments": [
+                          {
+                              "color": "good",
+                              "title": "브랜치 동기화 안내",
+                              "text": message,
+                          }
+                      ],
+                  }
+              )
+          )
+          PY
+          )
+
+          curl -sS -X POST https://slack.com/api/chat.postMessage \
+            -H "Authorization: Bearer ${SLACK_BOT_TOKEN}" \
+            -H "Content-Type: application/json; charset=utf-8" \
+            --data "${payload}"
