@@ -50,6 +50,30 @@ cp .env.example .env
 - `ci.yml`: uv 기반 lint/test 실행 후 Slack 알림
 - `train-dispatch.yml`: 수동/스케줄로 SQS 학습 메시지 전송 후 Slack 알림
 - `notify.yml`: 재사용 가능한 Slack 커스텀 알림 워크플로우
+- `ec2-monitoring-daily.yml`: 매일 EC2 인스턴스 현황 집계 후 Slack 알림
+- `ec2-scheduled-control.yml`: 평일 KST 10시/23시 EC2 시작/중단 자동화
+- `ec2-anomaly-cost-alert.yml`: 10분 단위 이상 징후(고CPU/디스크 부족 위험/헬스체크 실패) 탐지 + 일일 저사용 비용 최적화 후보 알림
+
+### 5-1. EC2 모니터링 알림 설정값
+
+필수 GitHub Secrets:
+
+- `AWS_ACCESS_KEY_ID`
+- `AWS_SECRET_ACCESS_KEY`
+- `AWS_REGION`
+- `SLACK_BOT_TOKEN`
+- `SLACK_CHANNEL_ID`
+
+선택 GitHub Secrets:
+
+- `ALERT_SNS_TOPIC_ARN` (설정 시 Slack + 이메일(SNS 구독) 동시 통지)
+
+선택 GitHub Variables:
+
+- `EC2_CPU_SPIKE_THRESHOLD` (기본값: `85`)
+- `EC2_DISK_USED_THRESHOLD` (기본값: `85`)
+- `EC2_LOW_CPU_THRESHOLD` (기본값: `5`)
+- `EC2_LOW_CPU_DAYS` (기본값: `7`)
 
 ## 6. 예측 API 서비스
 
