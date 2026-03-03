@@ -3,7 +3,7 @@
 
 wandb/
 /src/data/raw/*.csv
-/src/data/processed/*.csv
+/src/data/result/*.csv
 
 ### JupyterNotebooks ###
 # gitignore template for Jupyter Notebooks
