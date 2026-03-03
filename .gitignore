@@ -7,6 +7,9 @@ wandb/
 /src/data/result/*.csv
 =======
 /src/data/processed/*.csv
+<<<<<<< HEAD
+>>>>>>> c8a355a65e21a497c51b1a138a37bfc0067bead2
+=======
 >>>>>>> c8a355a65e21a497c51b1a138a37bfc0067bead2
 
 ### JupyterNotebooks ###
