@@ -27,11 +27,12 @@ jobs:
           import os
 
           message = (
-              "# 🤖 pull해주세요.\n"
-              f"- PR #{os.environ['PR_NUMBER']} 머지 완료\n"
-              f"- 제목: {os.environ['PR_TITLE']}\n"
-              f"- 머지한 사람: {os.environ['MERGED_BY']}\n"
-              f"- 링크: {os.environ['PR_URL']}\n"
+              ":bell: *PR 머지 알림*\n"
+              f"- *PR 번호*: #{os.environ['PR_NUMBER']}\n"
+              f"- *머지한 사람*: {os.environ['MERGED_BY']}\n"
+              f"- *링크*: {os.environ['PR_URL']}\n"
+              "\n"
+              "브랜치 동기화(`pull`)를 잊지 마세요! :arrow_down:"
           )
 
           print(
