@@ -17,7 +17,6 @@ def main():
 
     if not os.path.exists(raw_data_path):
         collector = TMDBCollector(api_key)
-        df_raw = collector.fetch_tmdb_data(max_pages=5)
 
     force_update = True
 
