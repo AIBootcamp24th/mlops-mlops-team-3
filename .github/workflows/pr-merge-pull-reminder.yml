@@ -2,13 +2,77 @@ name: PR Merge Pull Reminder
 
 on:
   pull_request:
+    branches:
+      - main
     types:
+      - opened
+      - reopened
+      - synchronize
       - closed
+  push:
+    branches:
+      - main
 
 permissions:
   contents: read
 
 jobs:
+  notify-pr-update:
+    if: ${{ github.event_name == 'pull_request' && github.event.action != 'closed' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send Slack PR update notice
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_CHANNEL_ID: ${{ secrets.SLACK_CHANNEL_ID }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          PR_ACTION: ${{ github.event.action }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+        run: |
+          payload=$(python - <<'PY'
+          import json
+          import os
+
+          action_map = {
+              "opened": "생성",
+              "reopened": "재오픈",
+              "synchronize": "업데이트",
+          }
+          action = action_map.get(os.environ["PR_ACTION"], os.environ["PR_ACTION"])
+
+          message = (
+              ":mega: *main 대상 PR 알림*\n"
+              f"- *이벤트*: PR {action}\n"
+              f"- *PR 번호*: #{os.environ['PR_NUMBER']}\n"
+              f"- *작성자*: {os.environ['PR_AUTHOR']}\n"
+              f"- *제목*: {os.environ['PR_TITLE']}\n"
+              f"- *링크*: {os.environ['PR_URL']}"
+          )
+
+          print(
+              json.dumps(
+                  {
+                      "channel": os.environ["SLACK_CHANNEL_ID"],
+                      "attachments": [
+                          {
+                              "color": "#36a64f",
+                              "title": "PR 이벤트 감지",
+                              "text": message,
+                          }
+                      ],
+                  }
+              )
+          )
+          PY
+          )
+
+          curl -sS -X POST https://slack.com/api/chat.postMessage \
+            -H "Authorization: Bearer ${SLACK_BOT_TOKEN}" \
+            -H "Content-Type: application/json; charset=utf-8" \
+            --data "${payload}"
+
   notify-pull-reminder:
     if: ${{ github.event.pull_request.merged == true }}
     runs-on: ubuntu-latest
@@ -43,6 +107,56 @@ jobs:
                           {
                               "color": "good",
                               "title": "브랜치 동기화 안내",
+                              "text": message,
+                          }
+                      ],
+                  }
+              )
+          )
+          PY
+          )
+
+          curl -sS -X POST https://slack.com/api/chat.postMessage \
+            -H "Authorization: Bearer ${SLACK_BOT_TOKEN}" \
+            -H "Content-Type: application/json; charset=utf-8" \
+            --data "${payload}"
+
+  notify-main-push:
+    if: ${{ github.event_name == 'push' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send Slack main push notice
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_CHANNEL_ID: ${{ secrets.SLACK_CHANNEL_ID }}
+          PUSH_ACTOR: ${{ github.actor }}
+          PUSH_SHA: ${{ github.sha }}
+          PUSH_REPO: ${{ github.repository }}
+          PUSH_REF: ${{ github.ref_name }}
+          PUSH_URL: ${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}
+        run: |
+          payload=$(python - <<'PY'
+          import json
+          import os
+
+          short_sha = os.environ["PUSH_SHA"][:7]
+          message = (
+              ":rocket: *main 브랜치 push 알림*\n"
+              f"- *레포*: {os.environ['PUSH_REPO']}\n"
+              f"- *브랜치*: {os.environ['PUSH_REF']}\n"
+              f"- *푸시한 사람*: {os.environ['PUSH_ACTOR']}\n"
+              f"- *커밋*: `{short_sha}`\n"
+              f"- *링크*: {os.environ['PUSH_URL']}"
+          )
+
+          print(
+              json.dumps(
+                  {
+                      "channel": os.environ["SLACK_CHANNEL_ID"],
+                      "attachments": [
+                          {
+                              "color": "#439FE0",
+                              "title": "main push 감지",
                               "text": message,
                           }
                       ],
