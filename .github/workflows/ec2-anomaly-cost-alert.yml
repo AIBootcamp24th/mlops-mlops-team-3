@@ -1,0 +1,333 @@
+name: EC2 Anomaly and Cost Alert
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "실행 모드 (realtime/cost/all)"
+        required: false
+        default: all
+        type: choice
+        options:
+          - realtime
+          - cost
+          - all
+  schedule:
+    - cron: "*/10 * * * *"
+    - cron: "10 1 * * *"
+
+permissions:
+  contents: read
+
+jobs:
+  realtime-anomaly:
+    if: >-
+      ${{
+        (github.event_name == 'workflow_dispatch' && (github.event.inputs.mode == 'realtime' || github.event.inputs.mode == 'all'))
+        || (github.event_name == 'schedule' && github.event.schedule != '10 1 * * *')
+      }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Detect realtime anomalies
+        id: detect
+        shell: bash
+        env:
+          CPU_SPIKE_THRESHOLD: ${{ vars.EC2_CPU_SPIKE_THRESHOLD }}
+          DISK_USED_THRESHOLD: ${{ vars.EC2_DISK_USED_THRESHOLD }}
+        run: |
+          set -euo pipefail
+
+          cpu_threshold="${CPU_SPIKE_THRESHOLD:-85}"
+          disk_threshold="${DISK_USED_THRESHOLD:-85}"
+          now_utc="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+          start_15m_utc="$(date -u -d "15 minutes ago" +"%Y-%m-%dT%H:%M:%SZ")"
+          generated_at_kst="$(TZ=Asia/Seoul date "+%Y-%m-%d %H:%M:%S %Z")"
+
+          regions=$(aws ec2 describe-regions --query "Regions[].RegionName" --output text)
+          alerts=""
+          total_checked=0
+
+          for region in $regions; do
+            rows=$(aws ec2 describe-instances \
+              --region "$region" \
+              --filters "Name=instance-state-name,Values=running" \
+              --query "Reservations[].Instances[].[InstanceId,Tags[?Key=='Name']|[0].Value]" \
+              --output text)
+
+            if [ -z "$rows" ] || [ "$rows" = "None" ]; then
+              continue
+            fi
+
+            while IFS=$'\t' read -r instance_id name; do
+              if [ -z "${instance_id:-}" ] || [ "${instance_id:-None}" = "None" ]; then
+                continue
+              fi
+              total_checked=$((total_checked + 1))
+              if [ -z "${name:-}" ] || [ "${name:-None}" = "None" ]; then
+                name="-"
+              fi
+
+              cpu_max=$(aws cloudwatch get-metric-statistics \
+                --region "$region" \
+                --namespace AWS/EC2 \
+                --metric-name CPUUtilization \
+                --dimensions Name=InstanceId,Value="$instance_id" \
+                --start-time "$start_15m_utc" \
+                --end-time "$now_utc" \
+                --period 300 \
+                --statistics Maximum \
+                --query "Datapoints[].Maximum" \
+                --output text | tr '\t' '\n' | sort -nr | sed -n '1p')
+              [ -z "${cpu_max:-}" ] || [ "${cpu_max}" = "None" ] && cpu_max="0"
+
+              status_failed=$(aws cloudwatch get-metric-statistics \
+                --region "$region" \
+                --namespace AWS/EC2 \
+                --metric-name StatusCheckFailed \
+                --dimensions Name=InstanceId,Value="$instance_id" \
+                --start-time "$start_15m_utc" \
+                --end-time "$now_utc" \
+                --period 60 \
+                --statistics Maximum \
+                --query "Datapoints[].Maximum" \
+                --output text | tr '\t' '\n' | sort -nr | sed -n '1p')
+              [ -z "${status_failed:-}" ] || [ "${status_failed}" = "None" ] && status_failed="0"
+
+              disk_max="0"
+              disk_metric_found=0
+              for fstype in xfs ext4; do
+                for device in nvme0n1p1 xvda1; do
+                  value=$(aws cloudwatch get-metric-statistics \
+                    --region "$region" \
+                    --namespace CWAgent \
+                    --metric-name disk_used_percent \
+                    --dimensions Name=InstanceId,Value="$instance_id" Name=path,Value=/ Name=device,Value="$device" Name=fstype,Value="$fstype" \
+                    --start-time "$start_15m_utc" \
+                    --end-time "$now_utc" \
+                    --period 300 \
+                    --statistics Maximum \
+                    --query "Datapoints[].Maximum" \
+                    --output text 2>/dev/null | tr '\t' '\n' | sort -nr | sed -n '1p' || true)
+
+                  if [ -n "${value:-}" ] && [ "$value" != "None" ]; then
+                    disk_metric_found=1
+                    is_higher=$(awk -v v1="$value" -v v2="$disk_max" 'BEGIN { if (v1+0 > v2+0) print 1; else print 0 }')
+                    if [ "$is_higher" = "1" ]; then
+                      disk_max="$value"
+                    fi
+                  fi
+                done
+              done
+
+              has_issue=0
+              reasons=""
+
+              is_cpu_spike=$(awk -v cpu="$cpu_max" -v th="$cpu_threshold" 'BEGIN { if (cpu+0 >= th+0) print 1; else print 0 }')
+              if [ "$is_cpu_spike" = "1" ]; then
+                has_issue=1
+                reasons="${reasons}CPU 급등(${cpu_max}% >= ${cpu_threshold}%) "
+              fi
+
+              is_status_failed=$(awk -v v="$status_failed" 'BEGIN { if (v+0 >= 1) print 1; else print 0 }')
+              if [ "$is_status_failed" = "1" ]; then
+                has_issue=1
+                reasons="${reasons}헬스체크 실패(StatusCheckFailed=${status_failed}) "
+              fi
+
+              if [ "$disk_metric_found" = "1" ]; then
+                is_disk_high=$(awk -v d="$disk_max" -v th="$disk_threshold" 'BEGIN { if (d+0 >= th+0) print 1; else print 0 }')
+                if [ "$is_disk_high" = "1" ]; then
+                  has_issue=1
+                  reasons="${reasons}디스크 부족 위험(disk_used_percent=${disk_max}% >= ${disk_threshold}%) "
+                fi
+              fi
+
+              if [ "$has_issue" = "1" ]; then
+                disk_text="${disk_max}%"
+                if [ "$disk_metric_found" = "0" ]; then
+                  disk_text="CWAgent 지표 없음"
+                fi
+                alerts="${alerts}"$'\n'"- [${region}] ${instance_id} (${name})"$'\n'"  - 이상징후: ${reasons}"$'\n'"  - 관측값: CPU_MAX_15m=${cpu_max}% | StatusCheckFailed_MAX_15m=${status_failed} | DiskUsed_MAX_15m=${disk_text}"
+              fi
+            done <<< "$rows"
+          done
+
+          if [ -z "$alerts" ]; then
+            severity="good"
+            title="EC2 이상 징후 모니터링 - 이상 없음"
+            message=$(printf "[EC2 이상 징후 모니터링]\n- 조회 시각(KST): %s\n- 점검 인스턴스 수: %s개\n- 결과: 임계치 초과/헬스체크 실패 인스턴스 없음" "$generated_at_kst" "$total_checked")
+          else
+            severity="danger"
+            title="EC2 이상 징후 감지 - 즉시 확인 필요"
+            run_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+            message=$(printf "[EC2 이상 징후 감지]\n- 조회 시각(KST): %s\n- 점검 인스턴스 수: %s개\n- 탐지 결과:%s\n\n[즉시 조치 가이드 (MTTR 단축)]\n1) 인스턴스 로그/프로세스 확인 (SSH 또는 SSM)\n2) CloudWatch 대시보드에서 15분/1시간 추세 확인\n3) 필요 시 서비스 재시작 또는 인스턴스 교체/재부팅\n4) 대응 내역을 슬랙 스레드에 공유\n- 실행 상세: %s" "$generated_at_kst" "$total_checked" "$alerts" "$run_url")
+          fi
+
+          {
+            echo "severity=${severity}"
+            echo "title=${title}"
+            echo "slack_message<<EOF"
+            echo "${message}"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Send Slack realtime notification
+        if: ${{ always() }}
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_CHANNEL_ID: ${{ secrets.SLACK_CHANNEL_ID }}
+          TITLE: ${{ steps.detect.outputs.title }}
+          COLOR: ${{ steps.detect.outputs.severity }}
+          MESSAGE: ${{ steps.detect.outputs.slack_message }}
+        run: |
+          payload=$(python -c "import json, os; print(json.dumps({'channel': os.environ['SLACK_CHANNEL_ID'], 'attachments': [{'color': os.environ.get('COLOR','good'), 'title': os.environ['TITLE'], 'text': os.environ['MESSAGE']}]}))")
+          curl -sS -X POST https://slack.com/api/chat.postMessage \
+            -H "Authorization: Bearer ${SLACK_BOT_TOKEN}" \
+            -H "Content-Type: application/json; charset=utf-8" \
+            --data "${payload}"
+
+      - name: Send SNS email realtime notification
+        if: ${{ always() }}
+        env:
+          ALERT_SNS_TOPIC_ARN: ${{ secrets.ALERT_SNS_TOPIC_ARN }}
+          TITLE: ${{ steps.detect.outputs.title }}
+          MESSAGE: ${{ steps.detect.outputs.slack_message }}
+        run: |
+          if [ -z "${ALERT_SNS_TOPIC_ARN:-}" ]; then
+            echo "ALERT_SNS_TOPIC_ARN 미설정으로 이메일 통지를 건너뜁니다."
+            exit 0
+          fi
+          aws sns publish \
+            --topic-arn "${ALERT_SNS_TOPIC_ARN}" \
+            --subject "${TITLE}" \
+            --message "${MESSAGE}" >/dev/null
+
+  cost-optimization:
+    if: >-
+      ${{
+        (github.event_name == 'workflow_dispatch' && (github.event.inputs.mode == 'cost' || github.event.inputs.mode == 'all'))
+        || (github.event_name == 'schedule' && github.event.schedule == '10 1 * * *')
+      }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Detect low-utilization candidates
+        id: lowutil
+        shell: bash
+        env:
+          LOW_CPU_THRESHOLD: ${{ vars.EC2_LOW_CPU_THRESHOLD }}
+          LOW_CPU_DAYS: ${{ vars.EC2_LOW_CPU_DAYS }}
+        run: |
+          set -euo pipefail
+
+          low_cpu_threshold="${LOW_CPU_THRESHOLD:-5}"
+          low_cpu_days="${LOW_CPU_DAYS:-7}"
+          generated_at_kst="$(TZ=Asia/Seoul date "+%Y-%m-%d %H:%M:%S %Z")"
+          now_utc="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+          start_utc="$(date -u -d "${low_cpu_days} days ago" +"%Y-%m-%dT%H:%M:%SZ")"
+
+          regions=$(aws ec2 describe-regions --query "Regions[].RegionName" --output text)
+          candidates=""
+          total_running=0
+
+          for region in $regions; do
+            rows=$(aws ec2 describe-instances \
+              --region "$region" \
+              --filters "Name=instance-state-name,Values=running" \
+              --query "Reservations[].Instances[].[InstanceId,InstanceType,Tags[?Key=='Name']|[0].Value]" \
+              --output text)
+
+            if [ -z "$rows" ] || [ "$rows" = "None" ]; then
+              continue
+            fi
+
+            while IFS=$'\t' read -r instance_id instance_type name; do
+              if [ -z "${instance_id:-}" ] || [ "${instance_id:-None}" = "None" ]; then
+                continue
+              fi
+              total_running=$((total_running + 1))
+              if [ -z "${name:-}" ] || [ "${name:-None}" = "None" ]; then
+                name="-"
+              fi
+
+              avg_cpu=$(aws cloudwatch get-metric-statistics \
+                --region "$region" \
+                --namespace AWS/EC2 \
+                --metric-name CPUUtilization \
+                --dimensions Name=InstanceId,Value="$instance_id" \
+                --start-time "$start_utc" \
+                --end-time "$now_utc" \
+                --period 3600 \
+                --statistics Average \
+                --query "Datapoints[].Average" \
+                --output text | tr '\t' '\n' | awk 'NF {sum+=$1; cnt+=1} END {if (cnt>0) printf "%.2f", sum/cnt; else print "0"}')
+
+              is_low=$(awk -v avg="$avg_cpu" -v th="$low_cpu_threshold" 'BEGIN { if (avg+0 <= th+0) print 1; else print 0 }')
+              if [ "$is_low" = "1" ]; then
+                candidates="${candidates}"$'\n'"- [${region}] ${instance_id} (${name}, ${instance_type}) : ${low_cpu_days}일 평균 CPU ${avg_cpu}%"
+              fi
+            done <<< "$rows"
+          done
+
+          if [ -z "$candidates" ]; then
+            severity="good"
+            title="EC2 비용 최적화 점검 - 대상 없음"
+            message=$(printf "[EC2 비용 최적화 점검]\n- 조회 시각(KST): %s\n- 실행 중 인스턴스 수: %s개\n- 결과: 저사용 임계치 이하 인스턴스 없음" "$generated_at_kst" "$total_running")
+          else
+            severity="warning"
+            title="EC2 저사용 인스턴스 감지 - 스케일다운/스케줄 정지 검토"
+            run_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+            message=$(printf "[EC2 비용 최적화 후보]\n- 조회 시각(KST): %s\n- 실행 중 인스턴스 수: %s개\n- 기준: %s일 평균 CPU <= %s%%\n- 후보:%s\n\n[권장 조치]\n1) 야간/주말 스케줄 정지 대상 편입\n2) 인스턴스 타입 다운사이징 검토\n3) 장기 미사용이면 중단 또는 삭제\n- 실행 상세: %s" "$generated_at_kst" "$total_running" "$low_cpu_days" "$low_cpu_threshold" "$candidates" "$run_url")
+          fi
+
+          {
+            echo "severity=${severity}"
+            echo "title=${title}"
+            echo "slack_message<<EOF"
+            echo "${message}"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Send Slack cost notification
+        if: ${{ always() }}
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_CHANNEL_ID: ${{ secrets.SLACK_CHANNEL_ID }}
+          TITLE: ${{ steps.lowutil.outputs.title }}
+          COLOR: ${{ steps.lowutil.outputs.severity }}
+          MESSAGE: ${{ steps.lowutil.outputs.slack_message }}
+        run: |
+          payload=$(python -c "import json, os; print(json.dumps({'channel': os.environ['SLACK_CHANNEL_ID'], 'attachments': [{'color': os.environ.get('COLOR','good'), 'title': os.environ['TITLE'], 'text': os.environ['MESSAGE']}]}))")
+          curl -sS -X POST https://slack.com/api/chat.postMessage \
+            -H "Authorization: Bearer ${SLACK_BOT_TOKEN}" \
+            -H "Content-Type: application/json; charset=utf-8" \
+            --data "${payload}"
+
+      - name: Send SNS email cost notification
+        if: ${{ always() }}
+        env:
+          ALERT_SNS_TOPIC_ARN: ${{ secrets.ALERT_SNS_TOPIC_ARN }}
+          TITLE: ${{ steps.lowutil.outputs.title }}
+          MESSAGE: ${{ steps.lowutil.outputs.slack_message }}
+        run: |
+          if [ -z "${ALERT_SNS_TOPIC_ARN:-}" ]; then
+            echo "ALERT_SNS_TOPIC_ARN 미설정으로 이메일 통지를 건너뜁니다."
+            exit 0
+          fi
+          aws sns publish \
+            --topic-arn "${ALERT_SNS_TOPIC_ARN}" \
+            --subject "${TITLE}" \
+            --message "${MESSAGE}" >/dev/null
