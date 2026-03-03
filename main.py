@@ -55,7 +55,7 @@ def main():
 
     df_filtered = df_raw[features + [target, "id"]].dropna()
     df_filtered = df_filtered[(df_filtered["budget"] > 0) & (df_filtered["runtime"] > 0)]
-    print(f"📊 필터링된 학습용 영화 샘플 = 총 {len(df_filtered)}개")
+    print(f"필터링된 학습용 영화 샘플 = 총 {len(df_filtered)}개")
 
     preprocessor = DataPreprocessor(df_filtered, user_count=100, max_selected_count=20)
     preprocessor.run()
