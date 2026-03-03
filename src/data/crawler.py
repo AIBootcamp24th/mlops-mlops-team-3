@@ -10,7 +10,7 @@ class TMDBCollector:
         self.api_key = api_key
         self.base_url = "https://api.themoviedb.org/3"
 
-    def fetch_tmdb_data(self, max_pages=5) -> pd.DataFrame:
+    def fetch_tmdb_data(self, max_pages=50) -> pd.DataFrame:
         all_movies = []
 
         if not self.api_key:
