@@ -27,12 +27,11 @@ jobs:
           import os
 
           message = (
-              "[PR 머지 알림]\n"
+              "# 🤖 pull해주세요.\n"
               f"- PR #{os.environ['PR_NUMBER']} 머지 완료\n"
               f"- 제목: {os.environ['PR_TITLE']}\n"
               f"- 머지한 사람: {os.environ['MERGED_BY']}\n"
               f"- 링크: {os.environ['PR_URL']}\n"
-              "- pull해주세요."
           )
 
           print(
