@@ -12,13 +12,18 @@ load_dotenv()
 
 def main():
     api_key = os.getenv("TMDB_API_KEY")
-
     raw_data_path = "./src/data/raw/movies.csv"
     os.makedirs("./src/data/raw", exist_ok=True)
 
     if not os.path.exists(raw_data_path):
         collector = TMDBCollector(api_key)
         df_raw = collector.fetch_tmdb_data(max_pages=5)
+
+    force_update = True
+
+    if not os.path.exists(raw_data_path) or force_update:
+        collector = TMDBCollector(api_key)
+        df_raw = collector.fetch_tmdb_data(max_pages=50)
 
         if not df_raw.empty:
             df_raw.to_csv(raw_data_path, index=False)
@@ -30,10 +35,13 @@ def main():
         df_raw = pd.read_csv(raw_data_path)
         print(f"기존 데이터 로드: {raw_data_path}")
 
-    features = ["popularity", "vote_count"]
+    features = ["budget", "runtime", "popularity", "vote_count"]
     target = "vote_average"
 
     df = df_raw[features + [target]].dropna()
+    df = df[(df["budget"] > 0) & (df["runtime"] > 0)]
+
+    print(f"학습 데이터 샘플 = 총 {len(df)}개")
 
     dataset = RatingsDataset(df, feature_cols=features, target_col=target)
     train_loader = DataLoader(dataset, batch_size=8, shuffle=True)
