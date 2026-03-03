@@ -1,0 +1,164 @@
+name: EC2 Daily Monitoring
+
+on:
+  workflow_dispatch:
+  schedule:
+    # KST 10:00 = UTC 01:00
+    - cron: "0 1 * * *"
+
+permissions:
+  contents: read
+
+jobs:
+  collect-ec2:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Collect EC2 instances from all regions
+        id: collect
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          regions=$(aws ec2 describe-regions --query "Regions[].RegionName" --output text)
+          generated_at_kst=$(TZ=Asia/Seoul date "+%Y-%m-%d %H:%M:%S %Z")
+
+          total=0
+          running=0
+          stopped=0
+          terminated=0
+          other=0
+
+          details=""
+
+          for region in $regions; do
+            rows=$(aws ec2 describe-instances \
+              --region "$region" \
+              --query "Reservations[].Instances[].[InstanceId,State.Name,InstanceType,PrivateIpAddress,PublicIpAddress,Tags[?Key=='Name']|[0].Value]" \
+              --output text)
+
+            if [ -z "$rows" ] || [ "$rows" = "None" ]; then
+              continue
+            fi
+
+            details="${details}"$'\n'"*${region}*"$'\n'"\`\`\`"$'\n'"INSTANCE_ID\tSTATE\tTYPE\tPRIVATE_IP\tPUBLIC_IP\tNAME"$'\n'
+
+            while IFS=$'\t' read -r instance_id state instance_type private_ip public_ip name; do
+              if [ -z "${instance_id:-}" ] || [ "${instance_id:-None}" = "None" ]; then
+                continue
+              fi
+
+              total=$((total + 1))
+
+              case "$state" in
+                running) running=$((running + 1)) ;;
+                stopped) stopped=$((stopped + 1)) ;;
+                terminated) terminated=$((terminated + 1)) ;;
+                *) other=$((other + 1)) ;;
+              esac
+
+              if [ -z "${private_ip:-}" ] || [ "${private_ip:-None}" = "None" ]; then private_ip="-"; fi
+              if [ -z "${public_ip:-}" ] || [ "${public_ip:-None}" = "None" ]; then public_ip="-"; fi
+              if [ -z "${name:-}" ] || [ "${name:-None}" = "None" ]; then name="-"; fi
+
+              details="${details}${instance_id}\t${state}\t${instance_type}\t${private_ip}\t${public_ip}\t${name}"$'\n'
+            done <<< "$rows"
+
+            details="${details}\`\`\`"$'\n'
+          done
+
+          if [ "$total" -eq 0 ]; then
+            message=$(cat <<EOF
+          [EC2 일일 모니터링]
+          - 조회 시각(KST): ${generated_at_kst}
+          - 계정 내 조회된 인스턴스: 0개
+          EOF
+          )
+          else
+            message=$(cat <<EOF
+          [EC2 일일 모니터링]
+          - 조회 시각(KST): ${generated_at_kst}
+          - 전체: ${total}개
+          - running: ${running} / stopped: ${stopped} / terminated: ${terminated} / other: ${other}
+          ${details}
+          EOF
+          )
+          fi
+
+          {
+            echo "slack_message<<EOF"
+            echo "${message}"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Send Slack success notification
+        if: ${{ success() }}
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_CHANNEL_ID: ${{ secrets.SLACK_CHANNEL_ID }}
+          MESSAGE: ${{ steps.collect.outputs.slack_message }}
+        run: |
+          payload=$(python - <<'PY'
+          import json
+          import os
+
+          print(
+              json.dumps(
+                  {
+                      "channel": os.environ["SLACK_CHANNEL_ID"],
+                      "attachments": [
+                          {
+                              "color": "good",
+                              "title": "AWS EC2 모니터링 (매일 10시)",
+                              "text": os.environ["MESSAGE"],
+                          }
+                      ],
+                  }
+              )
+          )
+          PY
+          )
+
+          curl -sS -X POST https://slack.com/api/chat.postMessage \
+            -H "Authorization: Bearer ${SLACK_BOT_TOKEN}" \
+            -H "Content-Type: application/json; charset=utf-8" \
+            --data "${payload}"
+
+      - name: Send Slack failure notification
+        if: ${{ failure() }}
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_CHANNEL_ID: ${{ secrets.SLACK_CHANNEL_ID }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          payload=$(python - <<'PY'
+          import json
+          import os
+
+          print(
+              json.dumps(
+                  {
+                      "channel": os.environ["SLACK_CHANNEL_ID"],
+                      "attachments": [
+                          {
+                              "color": "danger",
+                              "title": "AWS EC2 모니터링 실패",
+                              "text": f"EC2 모니터링 워크플로우 실행 중 오류가 발생했습니다. 실행 URL: {os.environ['RUN_URL']}",
+                          }
+                      ],
+                  }
+              )
+          )
+          PY
+          )
+
+          curl -sS -X POST https://slack.com/api/chat.postMessage \
+            -H "Authorization: Bearer ${SLACK_BOT_TOKEN}" \
+            -H "Content-Type: application/json; charset=utf-8" \
+            --data "${payload}"

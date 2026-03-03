@@ -1,0 +1,249 @@
+name: EC2 Scheduled Start Stop
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "start 또는 stop (비워두면 현재 KST 시간으로 자동 결정)"
+        required: false
+        type: choice
+        options:
+          - start
+          - stop
+  schedule:
+    # 평일 KST 10:00 -> UTC 01:00
+    - cron: "0 1 * * 1-5"
+    # 평일 KST 23:00 -> UTC 14:00
+    - cron: "0 14 * * 1-5"
+
+permissions:
+  contents: read
+
+jobs:
+  control:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Start or stop target EC2 instances
+        id: control
+        shell: bash
+        env:
+          INPUT_ACTION: ${{ github.event.inputs.action }}
+        run: |
+          set -euo pipefail
+
+          target_file="config/ec2_schedule_targets.csv"
+          if [ ! -f "$target_file" ]; then
+            echo "대상 CSV 파일이 없습니다: $target_file"
+            exit 1
+          fi
+
+          mapfile -t target_names < <(
+            awk -F',' '
+              NR == 1 { next }
+              {
+                gsub(/^[ \t]+|[ \t]+$/, "", $1)
+                if ($1 != "") print $1
+              }
+            ' "$target_file"
+          )
+
+          resolved_action="${INPUT_ACTION:-}"
+          hour_kst=$(TZ=Asia/Seoul date "+%H")
+
+          if [ -z "$resolved_action" ]; then
+            if [ "$hour_kst" = "10" ]; then
+              resolved_action="start"
+            elif [ "$hour_kst" = "23" ]; then
+              resolved_action="stop"
+            else
+              echo "지원하지 않는 실행 시각입니다. (KST ${hour_kst}시)"
+              exit 1
+            fi
+          fi
+
+          if [ "$resolved_action" != "start" ] && [ "$resolved_action" != "stop" ]; then
+            echo "action 값은 start 또는 stop 이어야 합니다."
+            exit 1
+          fi
+
+          if [ "${#target_names[@]}" -eq 0 ]; then
+            echo "유효한 대상 인스턴스 이름이 없습니다."
+            exit 1
+          fi
+
+          names_csv=$(IFS=, ; echo "${target_names[*]}")
+          generated_at_kst=$(TZ=Asia/Seoul date "+%Y-%m-%d %H:%M:%S %Z")
+
+          declare -A seen_name_map=()
+          for name in "${target_names[@]}"; do
+            seen_name_map["$name"]=0
+          done
+
+          total_target_instances=0
+          total_action_instances=0
+          details=""
+
+          regions=$(aws ec2 describe-regions --query "Regions[].RegionName" --output text)
+
+          for region in $regions; do
+            rows=$(aws ec2 describe-instances \
+              --region "$region" \
+              --filters "Name=tag:Name,Values=${names_csv}" "Name=instance-state-name,Values=pending,running,stopping,stopped" \
+              --query "Reservations[].Instances[].[InstanceId,State.Name,Tags[?Key=='Name']|[0].Value]" \
+              --output text)
+
+            if [ -z "$rows" ] || [ "$rows" = "None" ]; then
+              continue
+            fi
+
+            details="${details}"$'\n'"*${region}*"$'\n'
+            details="${details}INSTANCE_ID\tNAME\t기존상태\t처리결과"$'\n'
+
+            action_ids=()
+            while IFS=$'\t' read -r instance_id state name; do
+              if [ -z "${instance_id:-}" ] || [ "${instance_id:-None}" = "None" ]; then
+                continue
+              fi
+
+              if [ -z "${name:-}" ] || [ "${name:-None}" = "None" ]; then
+                name="-"
+              fi
+
+              total_target_instances=$((total_target_instances + 1))
+              if [ "${name}" != "-" ] && [ -n "${seen_name_map[$name]+x}" ]; then
+                seen_name_map["$name"]=1
+              fi
+
+              result="skip"
+              if [ "$resolved_action" = "start" ] && [ "$state" = "stopped" ]; then
+                action_ids+=("${instance_id}")
+                result="start 요청"
+              elif [ "$resolved_action" = "stop" ] && [ "$state" = "running" ]; then
+                action_ids+=("${instance_id}")
+                result="stop 요청"
+              else
+                result="조건불일치(${state})"
+              fi
+
+              details="${details}${instance_id}\t${name}\t${state}\t${result}"$'\n'
+            done <<< "$rows"
+
+            if [ "${#action_ids[@]}" -gt 0 ]; then
+              if [ "$resolved_action" = "start" ]; then
+                aws ec2 start-instances --region "$region" --instance-ids "${action_ids[@]}" >/dev/null
+              else
+                aws ec2 stop-instances --region "$region" --instance-ids "${action_ids[@]}" >/dev/null
+              fi
+              total_action_instances=$((total_action_instances + ${#action_ids[@]}))
+            fi
+          done
+
+          missing_names=()
+          for name in "${target_names[@]}"; do
+            if [ "${seen_name_map[$name]}" -eq 0 ]; then
+              missing_names+=("${name}")
+            fi
+          done
+
+          if [ "${#missing_names[@]}" -eq 0 ]; then
+            missing_text="-"
+          else
+            missing_text=$(IFS=', '; echo "${missing_names[*]}")
+          fi
+
+          action_kor="실행(start)"
+          if [ "$resolved_action" = "stop" ]; then
+            action_kor="중단(stop)"
+          fi
+
+          message=$(printf "%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s" \
+            "[EC2 스케줄 제어]" \
+            "- 조회 시각(KST): ${generated_at_kst}" \
+            "- 요청 동작: ${action_kor}" \
+            "- 대상 이름: ${names_csv}" \
+            "- 조회된 대상 인스턴스 수: ${total_target_instances}개" \
+            "- 실제 처리 수: ${total_action_instances}개" \
+            "- AWS에서 찾지 못한 이름: ${missing_text}" \
+            "${details}")
+
+          {
+            echo "slack_message<<EOF"
+            echo "${message}"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Send Slack success notification
+        if: ${{ success() }}
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_CHANNEL_ID: ${{ secrets.SLACK_CHANNEL_ID }}
+          MESSAGE: ${{ steps.control.outputs.slack_message }}
+        run: |
+          payload=$(python - <<'PY'
+          import json
+          import os
+
+          print(
+              json.dumps(
+                  {
+                      "channel": os.environ["SLACK_CHANNEL_ID"],
+                      "attachments": [
+                          {
+                              "color": "good",
+                              "title": "AWS EC2 스케줄 실행/중단 결과",
+                              "text": os.environ["MESSAGE"],
+                          }
+                      ],
+                  }
+              )
+          )
+          PY
+          )
+
+          curl -sS -X POST https://slack.com/api/chat.postMessage \
+            -H "Authorization: Bearer ${SLACK_BOT_TOKEN}" \
+            -H "Content-Type: application/json; charset=utf-8" \
+            --data "${payload}"
+
+      - name: Send Slack failure notification
+        if: ${{ failure() }}
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_CHANNEL_ID: ${{ secrets.SLACK_CHANNEL_ID }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          payload=$(python - <<'PY'
+          import json
+          import os
+
+          print(
+              json.dumps(
+                  {
+                      "channel": os.environ["SLACK_CHANNEL_ID"],
+                      "attachments": [
+                          {
+                              "color": "danger",
+                              "title": "AWS EC2 스케줄 실행/중단 실패",
+                              "text": f"워크플로우 오류가 발생했습니다. 실행 URL: {os.environ['RUN_URL']}",
+                          }
+                      ],
+                  }
+              )
+          )
+          PY
+          )
+
+          curl -sS -X POST https://slack.com/api/chat.postMessage \
+            -H "Authorization: Bearer ${SLACK_BOT_TOKEN}" \
+            -H "Content-Type: application/json; charset=utf-8" \
+            --data "${payload}"

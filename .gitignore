@@ -1,6 +1,8 @@
 # Created by https://www.toptal.com/developers/gitignore/api/windows,macos,linux,python,jupyternotebooks,vim,visualstudiocode
 # Edit at https://www.toptal.com/developers/gitignore?templates=windows,macos,linux,python,jupyternotebooks,vim,visualstudiocode
 
+wandb/
+
 ### JupyterNotebooks ###
 # gitignore template for Jupyter Notebooks
 # website: http://jupyter.org/
@@ -184,6 +186,9 @@ celerybeat.pid
 
 # Environments
 .env
+remote.env
+
+# 원격 서버 연결 정보 (보안)
 .venv
 env/
 venv/
