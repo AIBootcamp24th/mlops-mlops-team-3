@@ -13,7 +13,7 @@
 ## 2. Team Members
 
 - [유준우 (팀장)](https://github.com/joonwoo-yoo)
-- 문성호
+- [문성호](https://github.com/Eclipse-Universe)
 - [서지은](https://github.com/jieunseo02)
 - [송민성](https://github.com/alstjd0051)
 - [송용단](https://github.com/totalintelli)
