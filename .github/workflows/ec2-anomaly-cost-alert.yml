@@ -11,11 +11,9 @@ on:
         options:
           - realtime
           - cost
-          - daily
           - all
   schedule:
     - cron: "*/10 * * * *"
-    - cron: "0 1 * * *"
     - cron: "10 1 * * *"
 
 permissions:
@@ -26,7 +24,7 @@ jobs:
     if: >-
       ${{
         (github.event_name == 'workflow_dispatch' && (github.event.inputs.mode == 'realtime' || github.event.inputs.mode == 'all'))
-        || (github.event_name == 'schedule' && github.event.schedule == '*/10 * * * *')
+        || (github.event_name == 'schedule' && github.event.schedule != '10 1 * * *')
       }}
     runs-on: ubuntu-latest
     steps:
@@ -333,94 +331,3 @@ jobs:
             --topic-arn "${ALERT_SNS_TOPIC_ARN}" \
             --subject "${TITLE}" \
             --message "${MESSAGE}" >/dev/null
-
-  daily-inventory:
-    if: >-
-      ${{
-        (github.event_name == 'workflow_dispatch' && (github.event.inputs.mode == 'daily' || github.event.inputs.mode == 'all'))
-        || (github.event_name == 'schedule' && github.event.schedule == '0 1 * * *')
-      }}
-    runs-on: ubuntu-latest
-    steps:
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ secrets.AWS_REGION }}
-
-      - name: Collect EC2 instances from all regions
-        id: collect
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          regions=$(aws ec2 describe-regions --query "Regions[].RegionName" --output text)
-          generated_at_kst=$(TZ=Asia/Seoul date "+%Y-%m-%d %H:%M:%S %Z")
-
-          total=0
-          running=0
-          stopped=0
-          terminated=0
-          other=0
-          details=""
-
-          for region in $regions; do
-            rows=$(aws ec2 describe-instances \
-              --region "$region" \
-              --query "Reservations[].Instances[].[InstanceId,State.Name,InstanceType,PrivateIpAddress,PublicIpAddress,Tags[?Key=='Name']|[0].Value]" \
-              --output text)
-
-            if [ -z "$rows" ] || [ "$rows" = "None" ]; then
-              continue
-            fi
-
-            details="${details}"$'\n'"*${region}*"$'\n'"\`\`\`"$'\n'"INSTANCE_ID\tSTATE\tTYPE\tPRIVATE_IP\tPUBLIC_IP\tNAME"$'\n'
-
-            while IFS=$'\t' read -r instance_id state instance_type private_ip public_ip name; do
-              if [ -z "${instance_id:-}" ] || [ "${instance_id:-None}" = "None" ]; then
-                continue
-              fi
-
-              total=$((total + 1))
-              case "$state" in
-                running) running=$((running + 1)) ;;
-                stopped) stopped=$((stopped + 1)) ;;
-                terminated) terminated=$((terminated + 1)) ;;
-                *) other=$((other + 1)) ;;
-              esac
-
-              [ -z "${private_ip:-}" ] || [ "${private_ip:-None}" = "None" ] && private_ip="-"
-              [ -z "${public_ip:-}" ] || [ "${public_ip:-None}" = "None" ] && public_ip="-"
-              [ -z "${name:-}" ] || [ "${name:-None}" = "None" ] && name="-"
-
-              details="${details}${instance_id}\t${state}\t${instance_type}\t${private_ip}\t${public_ip}\t${name}"$'\n'
-            done <<< "$rows"
-
-            details="${details}\`\`\`"$'\n'
-          done
-
-          if [ "$total" -eq 0 ]; then
-            message=$(printf "[EC2 일일 인벤토리]\n- 조회 시각(KST): %s\n- 계정 내 조회된 인스턴스: 0개" "$generated_at_kst")
-          else
-            message=$(printf "[EC2 일일 인벤토리]\n- 조회 시각(KST): %s\n- 전체: %s개\n- running: %s / stopped: %s / terminated: %s / other: %s\n%s" "$generated_at_kst" "$total" "$running" "$stopped" "$terminated" "$other" "$details")
-          fi
-
-          {
-            echo "slack_message<<EOF"
-            echo "${message}"
-            echo "EOF"
-          } >> "$GITHUB_OUTPUT"
-
-      - name: Send Slack daily inventory notification
-        if: ${{ always() }}
-        env:
-          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
-          SLACK_CHANNEL_ID: ${{ secrets.SLACK_CHANNEL_ID }}
-          MESSAGE: ${{ steps.collect.outputs.slack_message }}
-        run: |
-          payload=$(python -c "import json, os; print(json.dumps({'channel': os.environ['SLACK_CHANNEL_ID'], 'attachments': [{'color': 'good', 'title': 'AWS EC2 일일 인벤토리', 'text': os.environ['MESSAGE']}]}))")
-          curl -sS -X POST https://slack.com/api/chat.postMessage \
-            -H "Authorization: Bearer ${SLACK_BOT_TOKEN}" \
-            -H "Content-Type: application/json; charset=utf-8" \
-            --data "${payload}"
