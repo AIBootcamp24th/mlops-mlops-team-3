@@ -17,13 +17,26 @@ class TMDBCollector:
             print("에러: .env 파일에 TMDB_API_KEY가 존재하지 않습니다.")
             return pd.DataFrame()
 
+        discover_url = f"{self.base_url}/discover/movie"
+
         for page in tqdm(range(1, max_pages + 1), desc="TMDB 데이터 페이지 수집 시작"):
-            url = f"{self.base_url}/movie/popular?api_key={self.api_key}&language=ko-KR&page={page}"
+            params = {
+                "api_key": self.api_key,
+                "language": "ko-KR",
+                "sort_by": "popularity.desc",
+                "with_original_language": "ko",
+                "region": "KR",
+                "page": page,
+            }
+
             try:
-                response = requests.get(url)
+                response = requests.get(discover_url, params=params)
                 response.raise_for_status()
                 data = response.json()
                 movies = data.get("results", [])
+
+                if not movies:
+                    break
 
                 for movie in movies:
                     detail = self._get_movie_details(movie["id"])
@@ -39,9 +52,11 @@ class TMDBCollector:
         return pd.DataFrame(all_movies)
 
     def _get_movie_details(self, movie_id):
-        url = f"{self.base_url}/movie/{movie_id}?api_key={self.api_key}&language=ko-KR"
+        url = f"{self.base_url}/movie/{movie_id}"
+        params = {"api_key": self.api_key, "language": "ko-KR"}
+
         try:
-            response = requests.get(url)
+            response = requests.get(url, params=params)
             if response.status_code == 200:
                 data = response.json()
                 return {"budget": data.get("budget", 0), "runtime": data.get("runtime", 0)}
