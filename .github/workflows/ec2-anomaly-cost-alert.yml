@@ -14,6 +14,7 @@ on:
           - all
   schedule:
     - cron: "*/10 * * * *"
+    - cron: "5 */8 * * *"
     - cron: "10 1 * * *"
 
 permissions:
@@ -179,7 +180,12 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Send Slack realtime notification
-        if: ${{ always() }}
+        if: >-
+          ${{
+            steps.detect.outputs.severity == 'danger'
+            || (github.event_name == 'workflow_dispatch' && (github.event.inputs.mode == 'realtime' || github.event.inputs.mode == 'all'))
+            || (github.event_name == 'schedule' && github.event.schedule == '5 */8 * * *')
+          }}
         env:
           SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
           SLACK_CHANNEL_ID: ${{ secrets.SLACK_CHANNEL_ID }}
@@ -194,7 +200,12 @@ jobs:
             --data "${payload}"
 
       - name: Send SNS email realtime notification
-        if: ${{ always() }}
+        if: >-
+          ${{
+            steps.detect.outputs.severity == 'danger'
+            || (github.event_name == 'workflow_dispatch' && (github.event.inputs.mode == 'realtime' || github.event.inputs.mode == 'all'))
+            || (github.event_name == 'schedule' && github.event.schedule == '5 */8 * * *')
+          }}
         env:
           ALERT_SNS_TOPIC_ARN: ${{ secrets.ALERT_SNS_TOPIC_ARN }}
           TITLE: ${{ steps.detect.outputs.title }}
@@ -302,7 +313,11 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Send Slack cost notification
-        if: ${{ always() }}
+        if: >-
+          ${{
+            steps.lowutil.outputs.severity == 'warning'
+            || (github.event_name == 'workflow_dispatch' && (github.event.inputs.mode == 'cost' || github.event.inputs.mode == 'all'))
+          }}
         env:
           SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
           SLACK_CHANNEL_ID: ${{ secrets.SLACK_CHANNEL_ID }}
@@ -317,7 +332,11 @@ jobs:
             --data "${payload}"
 
       - name: Send SNS email cost notification
-        if: ${{ always() }}
+        if: >-
+          ${{
+            steps.lowutil.outputs.severity == 'warning'
+            || (github.event_name == 'workflow_dispatch' && (github.event.inputs.mode == 'cost' || github.event.inputs.mode == 'all'))
+          }}
         env:
           ALERT_SNS_TOPIC_ARN: ${{ secrets.ALERT_SNS_TOPIC_ARN }}
           TITLE: ${{ steps.lowutil.outputs.title }}
