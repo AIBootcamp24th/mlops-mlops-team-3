@@ -14,12 +14,34 @@
 
 - [유준우 (팀장)](https://github.com/joonwoo-yoo)
 - [문성호](https://github.com/Eclipse-Universe)
-- [서지은](https://github.com/jieunseo02)
 - [송민성](https://github.com/alstjd0051)
 - [송용단](https://github.com/totalintelli)
 - [이재석](https://github.com/wotjrzm)
 
-## 3. Pipeline Architecture
+## 3. 업무 분담
+
+### MLOps
+
+- 이재석 님
+
+### AI 모델링
+
+- 유준우 님
+
+### MLOps, AI 모델링 지원
+
+- 문성호 님
+- 송용단 님
+- 송민성 님
+
+## 4. 1차 마일스톤 (목표)
+
+1. 영화 평점 예측 모델 만들기
+2. 영화 평점 예측 결과를 저장할 DB 세팅
+3. 웹 서버 세팅
+4. 웹 사이트에 영화 평점 예측 결과 출력
+
+## 5. Pipeline Architecture
 
 ```mermaid
 graph LR
@@ -38,20 +60,23 @@ graph LR
   L --> I
 ```
 
-## 4. Quick Start (uv)
+## 6. Quick Start (uv)
 
 ```bash
 uv sync --dev
 cp .env.example .env
 ```
 
-## 5. GitHub Actions
+## 7. GitHub Actions
 
 - `ci.yml`: uv 기반 lint/test 실행 후 Slack 알림
 - `train-dispatch.yml`: 수동/스케줄로 SQS 학습 메시지 전송 후 Slack 알림
 - `notify.yml`: 재사용 가능한 Slack 커스텀 알림 워크플로우
+- `ec2-monitoring-daily.yml`: 매일 EC2 인스턴스 현황 집계 후 Slack 알림
+- `ec2-scheduled-control.yml`: 평일 KST 10시/23시 EC2 시작/중단 자동화
+- `ec2-anomaly-cost-alert.yml`: 10분 단위 이상 징후(고CPU/디스크 부족 위험/헬스체크 실패) 탐지 + 일일 저사용 비용 최적화 후보 알림
 
-## 6. 예측 API 서비스
+## 8. 예측 API 서비스
 
 영화 메타데이터(budget, runtime, popularity, vote_count)를 기반으로 평점을 예측하는 REST API입니다.
 
@@ -72,7 +97,7 @@ curl -X POST http://localhost:8000/predict \
   -d '{"budget": 100000000, "runtime": 120, "popularity": 25.5, "vote_count": 5000}'
 ```
 
-## 7. Docker 실행
+## 9. Docker 실행
 
 ```bash
 # 1) 환경변수 준비
@@ -107,7 +132,7 @@ docker run --rm -p 8000:8000 --env-file .env mlops-trainer-worker:latest \
 uv run python -m src.train.run_train
 ```
 
-## 8. 원격 GPU 학습
+## 10. 원격 GPU 학습
 
 GPU가 있는 원격 서버에서 학습을 실행하려면:
 
@@ -126,7 +151,7 @@ cp remote.env.example remote.env
 
 자세한 내용은 [docs/remote-gpu-training.md](docs/remote-gpu-training.md)를 참고하세요.
 
-## 9. W&B Usage Guide
+## 11. W&B Usage Guide
 
 - 실험 추적: epoch별 `train_loss`, `val_rmse`
 - 아티팩트: 학습 완료 모델 파일 업로드
