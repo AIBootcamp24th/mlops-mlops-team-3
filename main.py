@@ -38,13 +38,13 @@ def main():
     raw_data_path = "./src/data/raw/movies.csv"
     os.makedirs("./src/data/raw", exist_ok=True)
 
-    force_update = True
+    force_update = False
 
     if not os.path.exists(raw_data_path) or force_update:
         collector = TMDBCollector(api_key)
         df_raw = collector.fetch_tmdb_data(max_pages=50)
         if not df_raw.empty:
-            df_raw.to_csv(raw_data_path, index=False)
+            df_raw.to_csv(raw_data_path, index=False, encoding="utf-8-sig")
             print(f"신규 데이터 저장 완료: {raw_data_path}")
     else:
         df_raw = pd.read_csv(raw_data_path)
