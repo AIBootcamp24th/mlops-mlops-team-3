@@ -42,7 +42,7 @@ class TMDBCollector:
                     detail = self._get_movie_details(movie["id"])
                     movie.update(detail)
                     all_movies.append(movie)
-                time.sleep(0.5)
+                time.sleep(0.4)
 
             except requests.RequestException as e:
                 print(f"요청 실패: {page} --> {e}")
