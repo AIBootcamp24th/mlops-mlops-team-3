@@ -14,7 +14,6 @@
 
 - [유준우 (팀장)](https://github.com/joonwoo-yoo)
 - [문성호](https://github.com/Eclipse-Universe)
-- [서지은](https://github.com/jieunseo02)
 - [송민성](https://github.com/alstjd0051)
 - [송용단](https://github.com/totalintelli)
 - [이재석](https://github.com/wotjrzm)
@@ -27,7 +26,6 @@
 
 ### AI 모델링
 
-- 서지은 님
 - 유준우 님
 
 ### MLOps, AI 모델링 지원
