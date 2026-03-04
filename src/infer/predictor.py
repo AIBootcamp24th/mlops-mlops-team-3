@@ -53,6 +53,8 @@ class ModelPredictor:
 
     def predict_one(self, features: list[float]) -> float:
         self._ensure_loaded()
+        if len(features) != len(self.feature_cols):
+            raise ValueError(f"피처 개수가 일치하지 않습니다. expected={len(self.feature_cols)}")
         scaled = self.scaler.transform([features])
         x = torch.tensor(scaled, dtype=torch.float32)
         with torch.no_grad():
@@ -61,6 +63,11 @@ class ModelPredictor:
 
     def predict_many(self, rows: list[list[float]]) -> list[float]:
         self._ensure_loaded()
+        invalid_rows = [idx for idx, row in enumerate(rows) if len(row) != len(self.feature_cols)]
+        if invalid_rows:
+            raise ValueError(
+                f"피처 개수가 일치하지 않는 row index가 있습니다: {invalid_rows[:5]}"
+            )
         scaled = self.scaler.transform(rows)
         x = torch.tensor(scaled, dtype=torch.float32)
         with torch.no_grad():

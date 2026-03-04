@@ -2,7 +2,7 @@
 
 ## 개요
 
-`mlops_project`는 GitHub Actions 기반 자동화와 AWS(S3/SQS), Python 워커, W&B, Slack 알림으로 구성됩니다.
+`mlops_project`는 Airflow 기반 오케스트레이션과 AWS(S3/SQS), Python 워커, W&B, Slack 알림으로 구성됩니다.
 
 - CI: 코드 품질 검사(`ruff`, `pytest`)와 결과 알림
 - 학습 트리거: 스케줄/수동 실행으로 SQS 학습 메시지 발행
@@ -17,7 +17,7 @@ graph LR
   B --> C[uv sync + ruff + pytest]
   C --> D[Slack Notify]
 
-  E[Schedule / Manual Trigger] --> F[Train Dispatch Workflow]
+  E[Airflow Scheduler / Manual Trigger] --> F[mlops_train_pipeline DAG]
   F --> G[scripts/send_sqs_message.py]
   G --> H[SQS train-queue]
   F --> D
@@ -43,7 +43,7 @@ graph LR
 
 ### 2) 학습 경로
 
-- 트리거: `workflow_dispatch` 또는 `cron(매일 02:00 UTC)`
+- 트리거: Airflow DAG 수동 실행 또는 스케줄(`매일 02:00 UTC`)
 - 처리:
   - `scripts/send_sqs_message.py`가 학습 파라미터를 SQS에 전송
   - `src/train/run_train.py`가 메시지 수신 후 S3 raw 데이터 학습

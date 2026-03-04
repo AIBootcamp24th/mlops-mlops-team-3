@@ -9,6 +9,16 @@ services:
     command: ["uv", "run", "python", "-m", "src.train.run_train"]
     restart: unless-stopped
 
+  infer-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: mlops-infer-worker
+    env_file:
+      - .env
+    command: ["uv", "run", "python", "-m", "src.infer.run_infer_worker"]
+    restart: unless-stopped
+
   api:
     build:
       context: .
