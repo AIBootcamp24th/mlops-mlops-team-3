@@ -7,6 +7,7 @@ import pandas as pd
 import torch
 
 from src.config import settings
+from src.data.preprocess import filter_korean_movies
 from src.data.s3_io import download_file, upload_file
 from src.train.model import RatingRegressor
 
@@ -26,6 +27,7 @@ def run_batch_inference(
         download_file(settings.aws_s3_raw_bucket, input_s3_key, local_input)
 
         df = pd.read_csv(local_input)
+        df = filter_korean_movies(df, require_language_col=True)
         x = torch.tensor(df[feature_cols].values, dtype=torch.float32)
 
         model = RatingRegressor(input_dim=len(feature_cols))

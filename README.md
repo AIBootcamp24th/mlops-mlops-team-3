@@ -2,13 +2,13 @@
 
 ## 1. Project Overview
 
-- 주제: TMDB 데이터를 활용한 영화 평점 예측 서비스 및 MLOps 파이프라인 구축
+- 주제: 한국 영화 데이터를 활용한 영화 평점 예측 서비스 및 MLOps 파이프라인 구축
 - 목표: 영화 메타데이터를 기반으로 평점을 예측하고, 학습/배포/모니터링을 자동화
 - 프로젝트 기간: 2026-02-27 ~ 2026-03-13
 - 코드 수정 가능 기간: 2026-02-27 ~ 2026-03-11 (의논 후 결정)
 - 코드 프리즈: 2026-03-12(의논 후 결정)
 - 최종 발표일: 2026-03-13
-- 기술스택: Python, uv, PyTorch, AWS S3, AWS SQS, W&B, GitHub Actions, Slack Bot
+- 기술스택: Python, uv, PyTorch, AWS S3, AWS SQS, W&B, GitHub Actions, Slack Bot, Dokcer
 
 ## 2. Team Members
 
@@ -78,7 +78,8 @@ cp .env.example .env
 
 ## 8. 예측 API 서비스
 
-영화 메타데이터(budget, runtime, popularity, vote_count)를 기반으로 평점을 예측하는 REST API입니다.
+클라이언트가 영화 제목을 입력하면 메타데이터를 조회해 평점을 예측하고,
+해당 영화 기준의 유사 작품 추천을 반환하는 `/analyze` 단일 REST API입니다.
 
 ```bash
 # API 서버 실행
@@ -86,16 +87,10 @@ uv run uvicorn src.api.main:app --host 0.0.0.0 --port 8000
 ```
 
 - `GET /health` - 헬스체크
-- `POST /predict` - 단일 영화 평점 예측
-- `POST /predict/batch` - 배치 예측
+- `POST /analyze` - 영화 제목 기준 평점 + 추천 통합 응답
 
-예시:
-
-```bash
-curl -X POST http://localhost:8000/predict \
-  -H "Content-Type: application/json" \
-  -d '{"budget": 100000000, "runtime": 120, "popularity": 25.5, "vote_count": 5000}'
-```
+- 영화 미검색: `404` (`영화 검색 결과가 없습니다.`)
+- 모델 미로드: `503` (`모델 파일을 찾을 수 없습니다...`)
 
 ## 9. Docker 실행
 
@@ -151,8 +146,34 @@ cp remote.env.example remote.env
 
 자세한 내용은 [docs/remote-gpu-training.md](docs/remote-gpu-training.md)를 참고하세요.
 
-## 11. W&B Usage Guide
+## 11. 모델 학습 정의
+
+- **학습 목표**: TMDB 한국 영화 메타데이터로 `vote_average`를 회귀 예측
+- **학습 데이터 범위**: `original_language == "ko"` 조건을 만족하는 영화만 사용
+- **입력 피처**: `budget`, `runtime`, `popularity`, `vote_count`
+- **타깃 라벨**: `vote_average`
+- **모델 구조**: PyTorch `RatingRegressor` (MLP, BatchNorm, Dropout 포함)
+- **전처리**: `StandardScaler`를 학습 데이터에 fit, 검증/추론에 동일 transform 적용
+- **손실 함수**: `MSELoss`
+- **평가 지표**:
+  - `val_rmse`: 검증 RMSE
+  - `val_out_of_range_ratio`: 예측값이 0~10 범위를 벗어나는 비율
+- **학습 아티팩트 저장 형식**:
+  - `model_state_dict`
+  - `feature_cols`, `target_col`
+  - `hidden_dims`, `dropout`
+  - `scaler_mean`, `scaler_scale`, `scaler_var`
+- **추론 안정화**: 최종 예측값은 0~10 범위로 clamp 처리
+
+## 12. W&B Usage Guide
 
 - 실험 추적: epoch별 `train_loss`, `val_rmse`
+- 실험 추적(권장): `val_out_of_range_ratio`도 함께 모니터링
 - 아티팩트: 학습 완료 모델 파일 업로드
 - 모델 관리: `scripts/register_model.py`를 기반으로 팀 정책에 맞는 Registry 로직 추가
+
+## 13. 데이터/라벨 규칙
+
+- 한국 데이터만 사용: `original_language == "ko"`
+- 기본 타깃 라벨: `vote_average`
+- 기본 피처: `budget`, `runtime`, `popularity`, `vote_count`

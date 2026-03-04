@@ -20,5 +20,10 @@ class Settings(BaseSettings):
     slack_bot_token: str = Field(default="", alias="SLACK_BOT_TOKEN")
     slack_channel_id: str = Field(default="", alias="SLACK_CHANNEL_ID")
 
+    api_model_s3_key: str = Field(default="", alias="API_MODEL_S3_KEY")
+    api_model_local_path: str = Field(default="artifacts/rating_model.pt", alias="API_MODEL_LOCAL_PATH")
+    tmdb_api_key: str = Field(default="", alias="TMDB_API_KEY")
+    tmdb_language: str = Field(default="ko-KR", alias="TMDB_LANGUAGE")
+
 
 settings = Settings()

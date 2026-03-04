@@ -1,13 +1,15 @@
 import pandas as pd
 import requests
 
+from src.data.preprocess import filter_korean_movies
+
 
 class TMDBCollector:
     def __init__(self, api_key):
         self.api_key = api_key
         self.base_url = "https://api.themoviedb.org/3"
 
-    def fetch_tmdb_data(self, max_pages=5) -> pd.DataFrame:
+    def fetch_tmdb_data(self, max_pages=5, korean_only: bool = True) -> pd.DataFrame:
         all_movies = []
 
         if not self.api_key:
@@ -31,4 +33,9 @@ class TMDBCollector:
                 break
 
         print(f"데이터 수집 완료 : 총 {len(all_movies)}개의 영화 정보.")
-        return pd.DataFrame(all_movies)
+        df = pd.DataFrame(all_movies)
+        if korean_only:
+            filtered_df = filter_korean_movies(df)
+            print(f"한국 영화 필터 적용 완료 : {len(filtered_df)}개 영화.")
+            return filtered_df
+        return df

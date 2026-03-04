@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from src.constants import FEATURE_COLS, TARGET_COL
 from src.config import settings
 from src.data.sqs_client import send_message
 
@@ -7,8 +8,8 @@ from src.data.sqs_client import send_message
 def main() -> None:
     payload = {
         "s3_key": "tmdb/latest/train.csv",
-        "target_col": "rating",
-        "feature_cols": ["budget", "runtime", "popularity", "vote_count"],
+        "target_col": TARGET_COL,
+        "feature_cols": FEATURE_COLS,
         "epochs": 10,
         "batch_size": 64,
         "learning_rate": 0.001,

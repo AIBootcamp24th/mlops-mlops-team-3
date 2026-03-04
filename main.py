@@ -4,8 +4,10 @@ import pandas as pd
 from dotenv import load_dotenv
 from torch.utils.data import DataLoader
 
+from src.constants import FEATURE_COLS, TARGET_COL
 from src.data.crawler import TMDBCollector
 from src.data.dataset import RatingsDataset
+from src.data.preprocess import filter_korean_movies
 
 load_dotenv()
 
@@ -30,8 +32,9 @@ def main():
         df_raw = pd.read_csv(raw_data_path)
         print(f"기존 데이터 로드: {raw_data_path}")
 
-    features = ["popularity", "vote_count"]
-    target = "vote_average"
+    df_raw = filter_korean_movies(df_raw, require_language_col=True)
+    features = [col for col in FEATURE_COLS if col in df_raw.columns]
+    target = TARGET_COL
 
     df = df_raw[features + [target]].dropna()
 
