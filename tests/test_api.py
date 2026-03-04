@@ -11,6 +11,7 @@ def _movie_detail(movie_id: int, title: str) -> dict:
         "id": movie_id,
         "title": title,
         "original_language": "ko",
+        "poster_path": "/sample-poster.jpg",
         "budget": 10000000,
         "runtime": 120,
         "popularity": 10.0,
@@ -53,7 +54,9 @@ def test_analyze_by_title(monkeypatch) -> None:
     assert response.status_code == 200
     body = response.json()
     assert body["movie"]["title"] == "기생충"
+    assert body["movie"]["poster_url"] == "https://image.tmdb.org/t/p/w500/sample-poster.jpg"
     assert len(body["recommendations"]) == 2
+    assert body["recommendations"][0]["poster_url"] == "https://image.tmdb.org/t/p/w500/sample-poster.jpg"
     assert "personalization_score" in body["recommendations"][0]
     assert "final_score" in body["recommendations"][0]
 

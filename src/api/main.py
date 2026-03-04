@@ -71,11 +71,20 @@ def _predict_rating(movie: dict) -> float:
     return round(predictor.predict_one(_extract_features(movie)), 4)
 
 
+def _poster_url(poster_path: str | None) -> str | None:
+    if not poster_path:
+        return None
+    return f"https://image.tmdb.org/t/p/w500{poster_path}"
+
+
 def _to_movie_score(movie: dict) -> MovieScore:
+    poster_path = movie.get("poster_path")
     return MovieScore(
         movie_id=int(movie["id"]),
         title=str(movie.get("title") or ""),
         original_language=str(movie.get("original_language") or ""),
+        poster_path=str(poster_path) if poster_path else None,
+        poster_url=_poster_url(str(poster_path)) if poster_path else None,
         budget=float(movie.get("budget") or 0.0),
         runtime=float(movie.get("runtime") or 0.0),
         popularity=float(movie.get("popularity") or 0.0),
@@ -122,6 +131,13 @@ def analyze_by_title(payload: AnalyzeRequest) -> AnalyzeByTitleResponse:
     try:
         base_movie = _resolve_movie_by_title(payload.title)
         recommended = tmdb_client.recommendations(int(base_movie["id"]), max_items=max(10, payload.top_k * 3))
+        if not recommended:
+            genre_ids = [int(genre["id"]) for genre in base_movie.get("genres", []) if "id" in genre]
+            recommended = tmdb_client.discover_korean_by_genres(
+                genre_ids=genre_ids,
+                exclude_movie_id=int(base_movie["id"]),
+                max_items=max(10, payload.top_k * 3),
+            )
         user_history = _build_user_history(payload.user_history)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -147,6 +163,10 @@ def analyze_by_title(payload: AnalyzeRequest) -> AnalyzeByTitleResponse:
             RecommendationItem(
                 movie_id=candidate.movie_id,
                 title=candidate.title,
+                poster_path=str(detail.get("poster_path")) if detail.get("poster_path") else None,
+                poster_url=_poster_url(str(detail.get("poster_path")))
+                if detail.get("poster_path")
+                else None,
                 tmdb_vote_average=float(detail.get("vote_average") or 0.0),
                 predicted_rating=round(candidate.predicted_rating, 4),
                 personalization_score=round(personalization, 4),

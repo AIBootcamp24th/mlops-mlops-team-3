@@ -21,6 +21,8 @@ class MovieScore(BaseModel):
     movie_id: int
     title: str
     original_language: str
+    poster_path: str | None = None
+    poster_url: str | None = None
     budget: float
     runtime: float
     popularity: float
@@ -37,6 +39,8 @@ class PredictByTitleResponse(BaseModel):
 class RecommendationItem(BaseModel):
     movie_id: int
     title: str
+    poster_path: str | None = None
+    poster_url: str | None = None
     tmdb_vote_average: float
     predicted_rating: float
     personalization_score: float

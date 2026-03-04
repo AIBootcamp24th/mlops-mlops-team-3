@@ -56,6 +56,33 @@ class TMDBClient:
         korean_items = [item for item in items if item.get("original_language") == KOREAN_LANGUAGE_CODE]
         return korean_items[:max_items]
 
+    def discover_korean_by_genres(
+        self,
+        genre_ids: list[int],
+        exclude_movie_id: int,
+        max_items: int = 20,
+    ) -> list[dict[str, Any]]:
+        self._ensure_api_key()
+        if not genre_ids:
+            return []
+
+        response = requests.get(
+            f"{self.base_url}/discover/movie",
+            params={
+                "api_key": self.api_key,
+                "language": self.language,
+                "sort_by": "popularity.desc",
+                "with_original_language": KOREAN_LANGUAGE_CODE,
+                "with_genres": ",".join(str(genre_id) for genre_id in genre_ids),
+                "page": 1,
+            },
+            timeout=20,
+        )
+        response.raise_for_status()
+        items = response.json().get("results", [])
+        filtered = [item for item in items if int(item.get("id", 0)) != exclude_movie_id]
+        return filtered[:max_items]
+
     def _ensure_api_key(self) -> None:
         if not self.api_key:
             raise FileNotFoundError("TMDB_API_KEY가 설정되지 않아 영화 조회를 수행할 수 없습니다.")
