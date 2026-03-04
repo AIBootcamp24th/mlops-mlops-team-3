@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from typing import Any
 
 import wandb
@@ -64,6 +65,7 @@ def _select_best_profile() -> dict[str, Any] | None:
 
 
 def main() -> None:
+    train_s3_key = os.getenv("AIRFLOW_TRAIN_S3_KEY", "tmdb/latest/train.csv")
     fallback_profile = {
         "tuning_profile": "baseline",
         "learning_rate": 0.001,
@@ -82,7 +84,7 @@ def main() -> None:
         print(f"경고: W&B best profile 조회 실패. baseline으로 진행합니다. ({exc})")
 
     payload = {
-        "s3_key": "tmdb/latest/train.csv",
+        "s3_key": train_s3_key,
         "target_col": TARGET_COL,
         "feature_cols": FEATURE_COLS,
         **selected_profile,

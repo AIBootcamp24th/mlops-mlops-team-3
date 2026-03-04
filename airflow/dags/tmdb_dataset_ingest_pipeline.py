@@ -6,14 +6,13 @@ from datetime import datetime, timedelta
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
-import boto3
 from airflow import DAG
 from airflow.datasets import Dataset
 from airflow.operators.bash import BashOperator
-from airflow.operators.empty import EmptyOperator
-from airflow.operators.python import BranchPythonOperator, PythonOperator
+from airflow.operators.python import PythonOperator
 
 TRAIN_S3_KEY = os.getenv("AIRFLOW_TRAIN_S3_KEY", "tmdb/latest/train.csv")
+INFER_S3_KEY = os.getenv("AIRFLOW_INFER_S3_KEY", "tmdb/latest/infer.csv")
 
 
 def _env_or_default(name: str, default: str) -> str:
@@ -23,10 +22,9 @@ def _env_or_default(name: str, default: str) -> str:
     return value
 
 
-TRAIN_DATASET_URI = _env_or_default(
-    "AIRFLOW_TRAIN_DATASET_URI",
-    f"s3://{_env_or_default('AWS_S3_RAW_BUCKET', 'mlops-raw-bucket')}/{TRAIN_S3_KEY}",
-)
+raw_bucket = _env_or_default("AWS_S3_RAW_BUCKET", "mlops-raw-bucket")
+TRAIN_DATASET_URI = _env_or_default("AIRFLOW_TRAIN_DATASET_URI", f"s3://{raw_bucket}/{TRAIN_S3_KEY}")
+INFER_DATASET_URI = _env_or_default("AIRFLOW_INFER_DATASET_URI", f"s3://{raw_bucket}/{INFER_S3_KEY}")
 
 
 def _notify_slack(message: str) -> None:
@@ -57,7 +55,7 @@ def _task_failure_callback(context: dict) -> None:
     run_id = context.get("run_id", "unknown_run")
     log_url = getattr(ti, "log_url", "")
     _notify_slack(
-        f"[Airflow][Train][FAILED] dag={dag_id}, task={task_id}, run_id={run_id}, log={log_url}"
+        f"[Airflow][DatasetIngest][FAILED] dag={dag_id}, task={task_id}, run_id={run_id}, log={log_url}"
     )
 
 
@@ -67,35 +65,11 @@ def validate_runtime_env() -> None:
         "AWS_ACCESS_KEY_ID",
         "AWS_SECRET_ACCESS_KEY",
         "AWS_S3_RAW_BUCKET",
-        "TRAIN_QUEUE_URL",
+        "TMDB_API_KEY",
     ]
     missing = [name for name in required_vars if not os.getenv(name)]
     if missing:
         raise RuntimeError(f"필수 환경변수가 누락되었습니다: {missing}")
-
-
-def choose_dispatch_or_skip() -> str:
-    bucket = os.getenv("AWS_S3_RAW_BUCKET", "")
-    region = os.getenv("AWS_REGION", "")
-    if not bucket:
-        return "skip_dispatch"
-
-    s3 = boto3.client("s3", region_name=region or None)
-    try:
-        response = s3.head_object(Bucket=bucket, Key=TRAIN_S3_KEY)
-        if int(response.get("ContentLength", 0)) <= 0:
-            return "skip_dispatch"
-    except Exception as exc:  # pragma: no cover - airflow runtime path
-        print(f"[DataQuality] train raw 데이터 확인 실패: {exc}")
-        return "skip_dispatch"
-    return "dispatch_train_message"
-
-
-def notify_skip() -> None:
-    bucket = os.getenv("AWS_S3_RAW_BUCKET", "")
-    _notify_slack(
-        f"[Airflow][Train][SKIP] 입력 데이터 검증 실패: s3://{bucket}/{TRAIN_S3_KEY}"
-    )
 
 
 default_args = {
@@ -108,53 +82,33 @@ default_args = {
 }
 
 with DAG(
-    dag_id="mlops_train_pipeline",
+    dag_id="tmdb_dataset_ingest_pipeline",
     start_date=datetime(2026, 2, 27),
     end_date=datetime(2026, 3, 11, 23, 59, 59),
-    schedule=[Dataset(TRAIN_DATASET_URI)],
+    schedule="0 1 * * *",
     catchup=False,
     default_args=default_args,
-    tags=["mlops", "train", "sqs", "wandb", "dataset"],
+    tags=["mlops", "dataset", "tmdb", "s3"],
 ) as dag:
     env_check = PythonOperator(
         task_id="validate_env",
         python_callable=validate_runtime_env,
     )
 
-    branch_quality = BranchPythonOperator(
-        task_id="branch_data_quality",
-        python_callable=choose_dispatch_or_skip,
-    )
-
-    dispatch_train = BashOperator(
-        task_id="dispatch_train_message",
-        append_env=True,
-        env={"PYTHONPATH": "/opt/airflow/project", "AIRFLOW_TRAIN_S3_KEY": TRAIN_S3_KEY},
-        bash_command=(
-            "cd /opt/airflow/project && "
-            "python scripts/send_sqs_message.py"
-        ),
-    )
-
-    quality_gate = BashOperator(
-        task_id="quality_gate_candidate",
+    fetch_and_upload = BashOperator(
+        task_id="fetch_and_upload_tmdb_dataset",
         append_env=True,
         env={
             "PYTHONPATH": "/opt/airflow/project",
-            "QUALITY_GATE_REQUIRED": os.getenv("QUALITY_GATE_REQUIRED", "false"),
+            "TMDB_MAX_PAGES": os.getenv("TMDB_MAX_PAGES", "5"),
+            "AIRFLOW_TRAIN_S3_KEY": TRAIN_S3_KEY,
+            "AIRFLOW_INFER_S3_KEY": INFER_S3_KEY,
         },
         bash_command=(
             "cd /opt/airflow/project && "
-            "python scripts/register_model.py"
+            "python scripts/fetch_tmdb_dataset.py"
         ),
+        outlets=[Dataset(TRAIN_DATASET_URI), Dataset(INFER_DATASET_URI)],
     )
 
-    skip_dispatch = PythonOperator(
-        task_id="skip_dispatch",
-        python_callable=notify_skip,
-    )
-    end_node = EmptyOperator(task_id="end_node")
-
-    env_check >> branch_quality
-    branch_quality >> dispatch_train >> quality_gate >> end_node
-    branch_quality >> skip_dispatch >> end_node
+    env_check >> fetch_and_upload

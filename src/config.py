@@ -25,6 +25,15 @@ class Settings(BaseSettings):
 
     slack_bot_token: str = Field(default="", alias="SLACK_BOT_TOKEN")
     slack_channel_id: str = Field(default="", alias="SLACK_CHANNEL_ID")
+    airflow_slack_webhook_url: str = Field(default="", alias="AIRFLOW_SLACK_WEBHOOK_URL")
+    airflow_task_retries: int = Field(default=2, alias="AIRFLOW_TASK_RETRIES")
+    airflow_task_retry_delay_min: int = Field(default=5, alias="AIRFLOW_TASK_RETRY_DELAY_MIN")
+    airflow_task_timeout_min: int = Field(default=20, alias="AIRFLOW_TASK_TIMEOUT_MIN")
+    airflow_train_s3_key: str = Field(default="tmdb/latest/train.csv", alias="AIRFLOW_TRAIN_S3_KEY")
+    airflow_infer_s3_key: str = Field(default="tmdb/latest/infer.csv", alias="AIRFLOW_INFER_S3_KEY")
+    airflow_train_dataset_uri: str = Field(default="", alias="AIRFLOW_TRAIN_DATASET_URI")
+    airflow_infer_dataset_uri: str = Field(default="", alias="AIRFLOW_INFER_DATASET_URI")
+    tmdb_max_pages: int = Field(default=5, alias="TMDB_MAX_PAGES")
 
     api_model_s3_key: str = Field(default="", alias="API_MODEL_S3_KEY")
     api_model_local_path: str = Field(default="artifacts/rating_model.pt", alias="API_MODEL_LOCAL_PATH")

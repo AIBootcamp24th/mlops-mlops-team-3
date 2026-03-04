@@ -80,17 +80,61 @@ cp .env.example .env
 
 ## 8. Airflow 오케스트레이션
 
-- DAG 1: `airflow/dags/mlops_train_pipeline.py`
-  - `validate_env` -> `dispatch_train_message` -> `quality_gate_candidate`
-  - 스케줄: 매일 UTC `02:00` (`0 2 * * *`)
-  - 실행 기간: `2026-02-27` ~ `2026-03-11` (`start_date`/`end_date` 고정)
-- DAG 2: `airflow/dags/mlops_infer_pipeline.py`
-  - `validate_env` -> `dispatch_infer_message`
-  - 스케줄: 매일 UTC `02:30` (`30 2 * * *`)
-  - 실행 기간: `2026-02-27` ~ `2026-03-11` (`start_date`/`end_date` 고정)
-- 역할: Airflow가 SQS 학습/배치추론 트리거를 오케스트레이션
-- 학습 메시지 전략: `scripts/send_sqs_message.py`가 W&B의 최근 성능 기준으로 best profile 1건을 선택해 SQS에 전송 (조회 실패 시 baseline 폴백)
-- 품질 게이트 정책: Airflow DAG의 `quality_gate_candidate`는 기본적으로 비차단 모드(`QUALITY_GATE_REQUIRED=false`)로 경고만 기록하고 DAG는 성공 처리
+- DAG 1: `airflow/dags/tmdb_dataset_ingest_pipeline.py`
+  - `validate_env` -> `fetch_and_upload_tmdb_dataset`
+  - 스케줄: 매일 UTC `01:00` (`0 1 * * *`)
+  - 역할: TMDB API에서 한국 영화 데이터를 수집해 S3 raw(`train/infer`)에 업로드하고 Airflow Dataset 이벤트 발행
+- DAG 2: `airflow/dags/mlops_train_pipeline.py`
+  - `validate_env` -> `branch_data_quality` -> (`dispatch_train_message` 또는 `skip_dispatch`) -> `quality_gate_candidate`
+  - 실행 트리거: `AIRFLOW_TRAIN_DATASET_URI` Dataset 이벤트(기본값: `s3://<AWS_S3_RAW_BUCKET>/tmdb/latest/train.csv`)
+  - 역할: 데이터 품질(객체 존재/용량) 점검 후 학습 SQS 디스패치, 실패 시 Slack 알림
+- DAG 3: `airflow/dags/mlops_infer_pipeline.py`
+  - `validate_env` -> `branch_data_quality` -> (`dispatch_infer_message` 또는 `skip_dispatch`)
+  - 실행 트리거: `AIRFLOW_INFER_DATASET_URI` Dataset 이벤트(기본값: `s3://<AWS_S3_RAW_BUCKET>/tmdb/latest/infer.csv`)
+  - 역할: 데이터 품질 점검 후 배치 추론 SQS 디스패치, 실패 시 Slack 알림
+- 안정성 정책: `AIRFLOW_TASK_RETRIES`, `AIRFLOW_TASK_RETRY_DELAY_MIN`, `AIRFLOW_TASK_TIMEOUT_MIN` 기반 공통 재시도/타임아웃 적용
+- 실패 알림: 각 DAG의 `on_failure_callback`에서 `AIRFLOW_SLACK_WEBHOOK_URL`로 실패/스킵 이벤트 전송
+- 실행 기간: 모든 DAG는 `2026-02-27` ~ `2026-03-11` 기간으로 제한(`start_date`/`end_date` 고정)
+
+```mermaid
+graph LR
+  ingestTrigger[AirflowScheduleOrManualTrigger] --> tmdbFetch[FetchTmdbDataset]
+  tmdbFetch --> uploadRaw[UploadRawToS3]
+  uploadRaw --> datasetEventTrain[TrainDatasetUpdated]
+  uploadRaw --> datasetEventInfer[InferDatasetUpdated]
+  datasetEventTrain --> trainValidate[TrainValidateEnv]
+  trainValidate --> trainQuality[TrainDataQualityCheck]
+  trainQuality --> trainBranch[TrainBranchDecision]
+  trainBranch -->|"pass"| trainDispatch[DispatchTrainSqs]
+  trainBranch -->|"fail"| trainSkip[TrainSkipAndSlack]
+  trainDispatch --> trainGate[QualityGateCandidate]
+  datasetEventInfer --> inferValidate[InferValidateEnv]
+  inferValidate --> inferQuality[InferDataQualityCheck]
+  inferQuality --> inferBranch[InferBranchDecision]
+  inferBranch -->|"pass"| inferDispatch[DispatchInferSqs]
+  inferBranch -->|"fail"| inferSkip[InferSkipAndSlack]
+```
+
+Airflow 실행:
+
+```bash
+# Airflow 초기화
+docker compose -f docker-compose.airflow.yml up airflow-init
+
+# Airflow Webserver/Scheduler 실행
+docker compose -f docker-compose.airflow.yml up -d airflow-webserver airflow-scheduler
+```
+
+AWS CLI 확인/수동 업로드:
+
+```bash
+# raw 데이터 확인
+aws s3 ls "s3://${AWS_S3_RAW_BUCKET}/tmdb/latest/"
+
+# (필요 시) 수동 업로드로 Dataset 이벤트 테스트
+aws s3 cp ./data/train.csv "s3://${AWS_S3_RAW_BUCKET}/${AIRFLOW_TRAIN_S3_KEY}"
+aws s3 cp ./data/infer.csv "s3://${AWS_S3_RAW_BUCKET}/${AIRFLOW_INFER_S3_KEY}"
+```
 
 ## 9. 예측 API 서비스
 
