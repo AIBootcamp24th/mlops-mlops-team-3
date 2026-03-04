@@ -1,6 +1,4 @@
-name_tag,owner_name
-mlops-tyler,송민성
-mlops-jslee,이재석
-mlops-jay,유준우
-mlops-lazenca,송용단
-mlops-etf,문성호
+name_tag,owner_name,role,env,keep_alive,start_weekday_kst,stop_weekday_kst
+mlops-tyler,송민성,api,prod,false,9,24
+mlops-lazenca,송용단,api,prod,false,9,24
+mlops-etf,문성호,api,prod,false,9,24

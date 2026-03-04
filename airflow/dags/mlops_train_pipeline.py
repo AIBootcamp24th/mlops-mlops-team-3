@@ -23,7 +23,8 @@ def validate_runtime_env() -> None:
 
 with DAG(
     dag_id="mlops_train_pipeline",
-    start_date=datetime(2026, 3, 1),
+    start_date=datetime(2026, 2, 27),
+    end_date=datetime(2026, 3, 11, 23, 59, 59),
     schedule="0 2 * * *",
     catchup=False,
     tags=["mlops", "train", "sqs", "wandb"],

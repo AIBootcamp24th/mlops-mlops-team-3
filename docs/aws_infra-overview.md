@@ -65,3 +65,14 @@ graph LR
 - S3: 단일 버킷을 raw/model/pred 용도로 공유(prefix 분리)
 - SQS: `train-queue`를 학습 작업 디스패치 큐로 사용
 - Terraform: `infra/`에서 S3/SQS를 생성하고 `terraform output`으로 `.env`와 동기화
+
+## EC2 운영 태그 표준
+
+비용 최적화 자동화를 위해 EC2는 아래 태그를 표준으로 사용합니다.
+
+- `Name`: 인스턴스 식별 이름
+- `role`: `api` | `train` | `infer`
+- `env`: `prod` (필요 시 `dev`, `stg`)
+- `keep_alive`: `true` | `false`
+
+`keep_alive=true`는 자동 중지 정책에서 제외됩니다.

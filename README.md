@@ -73,17 +73,21 @@ cp .env.example .env
 - `ci.yml`(수동 실행 시): `scripts/register_model.py`로 W&B 기반 최소 품질 게이트 확인
 - `notify.yml`: 재사용 가능한 Slack 커스텀 알림 워크플로우
 - `ec2-monitoring-daily.yml`: 매일 EC2 인스턴스 현황 집계 후 Slack 알림
-- `ec2-scheduled-control.yml`: 평일 KST 10시/23시 EC2 시작/중단 자동화
-- `ec2-anomaly-cost-alert.yml`: 10분 단위 이상 징후(고CPU/디스크 부족 위험/헬스체크 실패) 탐지 + 일일 저사용 비용 최적화 후보 알림
+- `ec2-scheduled-control.yml`: 평일 매시 실행으로 `config/ec2_schedule_targets.csv`의 role별 시작/중지 시간 정책 자동 적용
+- `ec2-queue-autoscale.yml`: SQS backlog 기반 `role=train|infer` 워커 자동 시작/중지
+- `ec2-anomaly-cost-alert.yml`: 10분 단위 이상 징후(고CPU/디스크 부족 위험/헬스체크 실패) 탐지 + 24시간 평균 CPU/Network/Disk 기준 저사용 후보 알림
+- 스케줄 기반 워크플로우는 `2026-02-27` ~ `2026-03-11` 기간에서만 실행되도록 기간 가드 적용
 
 ## 8. Airflow 오케스트레이션
 
 - DAG 1: `airflow/dags/mlops_train_pipeline.py`
   - `validate_env` -> `dispatch_train_message` -> `quality_gate_candidate`
   - 스케줄: 매일 UTC `02:00` (`0 2 * * *`)
+  - 실행 기간: `2026-02-27` ~ `2026-03-11` (`start_date`/`end_date` 고정)
 - DAG 2: `airflow/dags/mlops_infer_pipeline.py`
   - `validate_env` -> `dispatch_infer_message`
   - 스케줄: 매일 UTC `02:30` (`30 2 * * *`)
+  - 실행 기간: `2026-02-27` ~ `2026-03-11` (`start_date`/`end_date` 고정)
 - 역할: Airflow가 SQS 학습/배치추론 트리거를 오케스트레이션
 - 학습 메시지 전략: `scripts/send_sqs_message.py`가 W&B의 최근 성능 기준으로 best profile 1건을 선택해 SQS에 전송 (조회 실패 시 baseline 폴백)
 - 품질 게이트 정책: Airflow DAG의 `quality_gate_candidate`는 기본적으로 비차단 모드(`QUALITY_GATE_REQUIRED=false`)로 경고만 기록하고 DAG는 성공 처리
