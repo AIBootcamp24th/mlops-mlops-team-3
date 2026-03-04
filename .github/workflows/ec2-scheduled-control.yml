@@ -11,10 +11,10 @@ on:
           - start
           - stop
   schedule:
-    # 평일 KST 10:00 -> UTC 01:00
-    - cron: "0 1 * * 1-5"
-    # 평일 KST 23:00 -> UTC 14:00
-    - cron: "0 14 * * 1-5"
+    # 평일 KST 10:05 -> UTC 01:05 (정시 혼잡 구간 회피)
+    - cron: "5 1 * * 1-5"
+    # 평일 KST 23:05 -> UTC 14:05 (정시 혼잡 구간 회피)
+    - cron: "5 14 * * 1-5"
 
 permissions:
   contents: read
@@ -38,6 +38,7 @@ jobs:
         shell: bash
         env:
           INPUT_ACTION: ${{ github.event.inputs.action }}
+          EVENT_SCHEDULE: ${{ github.event.schedule }}
         run: |
           set -euo pipefail
 
@@ -58,9 +59,19 @@ jobs:
           )
 
           resolved_action="${INPUT_ACTION:-}"
-          hour_kst=$(TZ=Asia/Seoul date "+%H")
+          if [ -z "$resolved_action" ] && [ "${GITHUB_EVENT_NAME}" = "schedule" ]; then
+            if [ "${EVENT_SCHEDULE}" = "5 1 * * 1-5" ]; then
+              resolved_action="start"
+            elif [ "${EVENT_SCHEDULE}" = "5 14 * * 1-5" ]; then
+              resolved_action="stop"
+            else
+              echo "지원하지 않는 schedule 패턴입니다: ${EVENT_SCHEDULE}"
+              exit 1
+            fi
+          fi
 
           if [ -z "$resolved_action" ]; then
+            hour_kst=$(TZ=Asia/Seoul date "+%H")
             if [ "$hour_kst" = "10" ]; then
               resolved_action="start"
             elif [ "$hour_kst" = "23" ]; then
