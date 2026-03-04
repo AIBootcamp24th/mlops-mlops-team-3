@@ -34,24 +34,4 @@ jobs:
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           TRAIN_QUEUE_URL: ${{ secrets.TRAIN_QUEUE_URL }}
 
-  # notify-success:
-  #   needs: [dispatch-train-message]
-  #   uses: ./.github/workflows/notify.yml
-  #   with:
-  #     status: success
-  #     title: "Train Dispatch 성공"
-  #     message: "SQS 학습 메시지 전송 완료 / 실행 URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-  #   secrets:
-  #     SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
-  #     SLACK_CHANNEL_ID: ${{ secrets.SLACK_CHANNEL_ID }}
-
-  # notify-failure:
-  #   needs: [dispatch-train-message]
-  #   uses: ./.github/workflows/notify.yml
-  #   with:
-  #     status: failure
-  #     title: "Train Dispatch 실패"
-  #     message: "SQS 학습 메시지 전송 실패 / 실행 URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-  #   secrets:
-  #     SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
-  #     SLACK_CHANNEL_ID: ${{ secrets.SLACK_CHANNEL_ID }}
+  # 필요 시 dispatch 성공/실패 Slack 알림 잡을 이 파일 안에 직접 추가해 사용합니다.
