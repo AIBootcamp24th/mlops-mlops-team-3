@@ -38,7 +38,7 @@ def main():
     raw_data_path = "./src/data/raw/movies.csv"
     os.makedirs("./src/data/raw", exist_ok=True)
 
-    force_update = False
+    force_update = True
 
     if not os.path.exists(raw_data_path) or force_update:
         collector = TMDBCollector(api_key)
