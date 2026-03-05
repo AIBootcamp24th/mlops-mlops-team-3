@@ -4,17 +4,15 @@ on:
   workflow_dispatch:
     inputs:
       action:
-        description: "start 또는 stop (비워두면 현재 KST 시간으로 자동 결정)"
+        description: "start 또는 stop (비워두면 role별 운영시간 정책 적용)"
         required: false
         type: choice
         options:
           - start
           - stop
   schedule:
-    # 평일 KST 10:05 -> UTC 01:05 (정시 혼잡 구간 회피)
-    - cron: "5 1 * * 1-5"
-    # 평일 KST 23:05 -> UTC 14:05 (정시 혼잡 구간 회피)
-    - cron: "5 14 * * 1-5"
+    # 평일 매시 5분: role별 시작/중지 시간 정책 판정
+    - cron: "5 * * * 1-5"
 
 permissions:
   contents: read
@@ -23,10 +21,29 @@ jobs:
   control:
     runs-on: ubuntu-latest
     steps:
+      - name: Check orchestration period window
+        id: period_guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_EVENT_NAME}" != "schedule" ]; then
+            echo "in_window=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          today_kst="$(TZ=Asia/Seoul date +%Y-%m-%d)"
+          if [[ "$today_kst" < "2026-02-27" || "$today_kst" > "2026-03-11" ]]; then
+            echo "in_window=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "in_window=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Checkout
+        if: ${{ steps.period_guard.outputs.in_window == 'true' }}
         uses: actions/checkout@v4
 
       - name: Configure AWS credentials
+        if: ${{ steps.period_guard.outputs.in_window == 'true' }}
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
@@ -34,11 +51,11 @@ jobs:
           aws-region: ${{ secrets.AWS_REGION }}
 
       - name: Start or stop target EC2 instances
+        if: ${{ steps.period_guard.outputs.in_window == 'true' }}
         id: control
         shell: bash
         env:
           INPUT_ACTION: ${{ github.event.inputs.action }}
-          EVENT_SCHEDULE: ${{ github.event.schedule }}
         run: |
           set -euo pipefail
 
@@ -48,49 +65,54 @@ jobs:
             exit 1
           fi
 
-          mapfile -t target_names < <(
+          mapfile -t target_rows < <(
             awk -F',' '
               NR == 1 { next }
               {
-                gsub(/^[ \t]+|[ \t]+$/, "", $1)
-                if ($1 != "") print $1
+                for (i=1; i<=NF; i++) gsub(/^[ \t]+|[ \t]+$/, "", $i)
+                if ($1 != "") print $1 "\t" $2 "\t" $3 "\t" $4 "\t" $5 "\t" $6 "\t" $7
               }
             ' "$target_file"
           )
 
+          hour_kst=$(TZ=Asia/Seoul date "+%H")
+          hour_kst=$((10#$hour_kst))
+          mode="policy"
           resolved_action="${INPUT_ACTION:-}"
-          if [ -z "$resolved_action" ] && [ "${GITHUB_EVENT_NAME}" = "schedule" ]; then
-            if [ "${EVENT_SCHEDULE}" = "5 1 * * 1-5" ]; then
-              resolved_action="start"
-            elif [ "${EVENT_SCHEDULE}" = "5 14 * * 1-5" ]; then
-              resolved_action="stop"
-            else
-              echo "지원하지 않는 schedule 패턴입니다: ${EVENT_SCHEDULE}"
-              exit 1
-            fi
+          if [ -n "$resolved_action" ]; then
+            mode="manual"
           fi
 
-          if [ -z "$resolved_action" ]; then
-            hour_kst=$(TZ=Asia/Seoul date "+%H")
-            if [ "$hour_kst" = "10" ]; then
-              resolved_action="start"
-            elif [ "$hour_kst" = "23" ]; then
-              resolved_action="stop"
-            else
-              echo "지원하지 않는 실행 시각입니다. (KST ${hour_kst}시)"
-              exit 1
-            fi
-          fi
-
-          if [ "$resolved_action" != "start" ] && [ "$resolved_action" != "stop" ]; then
+          if [ -n "$resolved_action" ] && [ "$resolved_action" != "start" ] && [ "$resolved_action" != "stop" ]; then
             echo "action 값은 start 또는 stop 이어야 합니다."
             exit 1
           fi
 
-          if [ "${#target_names[@]}" -eq 0 ]; then
+          if [ "${#target_rows[@]}" -eq 0 ]; then
             echo "유효한 대상 인스턴스 이름이 없습니다."
             exit 1
           fi
+
+          declare -A owner_map=()
+          declare -A role_map=()
+          declare -A env_map=()
+          declare -A keepalive_map=()
+          declare -A start_hour_map=()
+          declare -A stop_hour_map=()
+          target_names=()
+          for row in "${target_rows[@]}"; do
+            IFS=$'\t' read -r name owner role env keep_alive start_hour stop_hour <<< "$row"
+            if [ -z "${name:-}" ]; then
+              continue
+            fi
+            owner_map["$name"]="${owner:-unknown}"
+            role_map["$name"]="${role:-api}"
+            env_map["$name"]="${env:-prod}"
+            keepalive_map["$name"]="${keep_alive:-false}"
+            start_hour_map["$name"]="${start_hour:-9}"
+            stop_hour_map["$name"]="${stop_hour:-24}"
+            target_names+=("$name")
+          done
 
           names_csv=$(IFS=, ; echo "${target_names[*]}")
           generated_at_kst=$(TZ=Asia/Seoul date "+%Y-%m-%d %H:%M:%S %Z")
@@ -101,7 +123,9 @@ jobs:
           done
 
           total_target_instances=0
-          total_action_instances=0
+          total_start_instances=0
+          total_stop_instances=0
+          total_keepalive_skips=0
           details=""
 
           regions=$(aws ec2 describe-regions --query "Regions[].RegionName" --output text)
@@ -110,7 +134,7 @@ jobs:
             rows=$(aws ec2 describe-instances \
               --region "$region" \
               --filters "Name=tag:Name,Values=${names_csv}" "Name=instance-state-name,Values=pending,running,stopping,stopped" \
-              --query "Reservations[].Instances[].[InstanceId,State.Name,Tags[?Key=='Name']|[0].Value]" \
+              --query "Reservations[].Instances[].[InstanceId,State.Name,Tags[?Key=='Name']|[0].Value,Tags[?Key=='keep_alive']|[0].Value]" \
               --output text)
 
             if [ -z "$rows" ] || [ "$rows" = "None" ]; then
@@ -118,10 +142,11 @@ jobs:
             fi
 
             details="${details}"$'\n'"*${region}*"$'\n'
-            details="${details}INSTANCE_ID\tNAME\t기존상태\t처리결과"$'\n'
+            details="${details}INSTANCE_ID\tNAME\tROLE\t기존상태\t정책동작\t처리결과"$'\n'
 
-            action_ids=()
-            while IFS=$'\t' read -r instance_id state name; do
+            start_ids=()
+            stop_ids=()
+            while IFS=$'\t' read -r instance_id state name keep_alive_tag; do
               if [ -z "${instance_id:-}" ] || [ "${instance_id:-None}" = "None" ]; then
                 continue
               fi
@@ -135,27 +160,52 @@ jobs:
                 seen_name_map["$name"]=1
               fi
 
+              role="${role_map[$name]:-api}"
+              policy_keepalive="${keepalive_map[$name]:-false}"
+              start_hour="${start_hour_map[$name]:-9}"
+              stop_hour="${stop_hour_map[$name]:-24}"
+              if [ -z "${keep_alive_tag:-}" ] || [ "${keep_alive_tag:-None}" = "None" ]; then
+                keep_alive_tag="false"
+              fi
+
+              if [ "$mode" = "manual" ]; then
+                row_action="$resolved_action"
+              else
+                row_action=""
+                if [ "$hour_kst" -eq "$start_hour" ]; then
+                  row_action="start"
+                elif { [ "$stop_hour" -eq 24 ] && [ "$hour_kst" -eq 0 ]; } || [ "$hour_kst" -eq "$stop_hour" ]; then
+                  row_action="stop"
+                fi
+              fi
+
               result="skip"
-              if [ "$resolved_action" = "start" ] && [ "$state" = "stopped" ]; then
-                action_ids+=("${instance_id}")
+              action_text="${row_action:--}"
+              should_skip_keepalive=0
+              if [ "$row_action" = "stop" ] && { [ "$policy_keepalive" = "true" ] || [ "$keep_alive_tag" = "true" ]; }; then
+                should_skip_keepalive=1
+                total_keepalive_skips=$((total_keepalive_skips + 1))
+                result="keep_alive 예외로 stop 제외"
+              elif [ "$row_action" = "start" ] && [ "$state" = "stopped" ]; then
+                start_ids+=("${instance_id}")
                 result="start 요청"
-              elif [ "$resolved_action" = "stop" ] && [ "$state" = "running" ]; then
-                action_ids+=("${instance_id}")
+              elif [ "$row_action" = "stop" ] && [ "$state" = "running" ]; then
+                stop_ids+=("${instance_id}")
                 result="stop 요청"
               else
                 result="조건불일치(${state})"
               fi
 
-              details="${details}${instance_id}\t${name}\t${state}\t${result}"$'\n'
+              details="${details}${instance_id}\t${name}\t${role}\t${state}\t${action_text}\t${result}"$'\n'
             done <<< "$rows"
 
-            if [ "${#action_ids[@]}" -gt 0 ]; then
-              if [ "$resolved_action" = "start" ]; then
-                aws ec2 start-instances --region "$region" --instance-ids "${action_ids[@]}" >/dev/null
-              else
-                aws ec2 stop-instances --region "$region" --instance-ids "${action_ids[@]}" >/dev/null
-              fi
-              total_action_instances=$((total_action_instances + ${#action_ids[@]}))
+            if [ "${#start_ids[@]}" -gt 0 ]; then
+              aws ec2 start-instances --region "$region" --instance-ids "${start_ids[@]}" >/dev/null
+              total_start_instances=$((total_start_instances + ${#start_ids[@]}))
+            fi
+            if [ "${#stop_ids[@]}" -gt 0 ]; then
+              aws ec2 stop-instances --region "$region" --instance-ids "${stop_ids[@]}" >/dev/null
+              total_stop_instances=$((total_stop_instances + ${#stop_ids[@]}))
             fi
           done
 
@@ -172,20 +222,13 @@ jobs:
             missing_text=$(IFS=', '; echo "${missing_names[*]}")
           fi
 
-          action_kor="실행(start)"
-          if [ "$resolved_action" = "stop" ]; then
-            action_kor="중단(stop)"
+          mode_text="정책기반(policy)"
+          if [ "$mode" = "manual" ]; then
+            mode_text="수동(${resolved_action})"
           fi
 
-          message=$(printf "%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s" \
-            "[EC2 스케줄 제어]" \
-            "- 조회 시각(KST): ${generated_at_kst}" \
-            "- 요청 동작: ${action_kor}" \
-            "- 대상 이름: ${names_csv}" \
-            "- 조회된 대상 인스턴스 수: ${total_target_instances}개" \
-            "- 실제 처리 수: ${total_action_instances}개" \
-            "- AWS에서 찾지 못한 이름: ${missing_text}" \
-            "${details}")
+          message=$(printf "[EC2 스케줄 제어]\n- 조회 시각(KST): %s\n- 실행 모드: %s\n- 현재 시각(KST hour): %s\n- 대상 이름: %s\n- 조회된 대상 인스턴스 수: %s개\n- 실제 start 처리 수: %s개\n- 실제 stop 처리 수: %s개\n- keep_alive 예외 건수: %s개\n- AWS에서 찾지 못한 이름: %s\n%s" \
+            "$generated_at_kst" "$mode_text" "$hour_kst" "$names_csv" "$total_target_instances" "$total_start_instances" "$total_stop_instances" "$total_keepalive_skips" "$missing_text" "$details")
 
           {
             echo "slack_message<<EOF"
@@ -194,7 +237,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Send Slack success notification
-        if: ${{ success() }}
+        if: ${{ success() && steps.period_guard.outputs.in_window == 'true' }}
         env:
           SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
           SLACK_CHANNEL_ID: ${{ secrets.SLACK_CHANNEL_ID }}
@@ -227,7 +270,7 @@ jobs:
             --data "${payload}"
 
       - name: Send Slack failure notification
-        if: ${{ failure() }}
+        if: ${{ failure() && steps.period_guard.outputs.in_window == 'true' }}
         env:
           SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
           SLACK_CHANNEL_ID: ${{ secrets.SLACK_CHANNEL_ID }}

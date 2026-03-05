@@ -73,7 +73,7 @@ docker compose -f docker-compose.gpu.yml logs -f trainer-worker-gpu
 
 ## 5. 학습 트리거
 
-GitHub Actions의 `train-dispatch.yml`을 수동 실행하거나, 로컬에서 SQS 메시지 전송:
+Airflow DAG 실행 또는 로컬에서 SQS 메시지 전송:
 
 ```bash
 uv run python scripts/send_sqs_message.py

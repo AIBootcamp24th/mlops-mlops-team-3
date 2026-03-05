@@ -29,7 +29,25 @@ jobs:
       }}
     runs-on: ubuntu-latest
     steps:
+      - name: Check orchestration period window
+        id: period_guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_EVENT_NAME}" != "schedule" ]; then
+            echo "in_window=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          today_kst="$(TZ=Asia/Seoul date +%Y-%m-%d)"
+          if [[ "$today_kst" < "2026-02-27" || "$today_kst" > "2026-03-11" ]]; then
+            echo "in_window=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "in_window=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Configure AWS credentials
+        if: ${{ steps.period_guard.outputs.in_window == 'true' }}
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
@@ -37,6 +55,7 @@ jobs:
           aws-region: ${{ secrets.AWS_REGION }}
 
       - name: Detect realtime anomalies
+        if: ${{ steps.period_guard.outputs.in_window == 'true' }}
         id: detect
         shell: bash
         env:
@@ -182,9 +201,12 @@ jobs:
       - name: Send Slack realtime notification
         if: >-
           ${{
-            steps.detect.outputs.severity == 'danger'
-            || (github.event_name == 'workflow_dispatch' && (github.event.inputs.mode == 'realtime' || github.event.inputs.mode == 'all'))
-            || (github.event_name == 'schedule' && github.event.schedule == '5 */8 * * *')
+            steps.period_guard.outputs.in_window == 'true'
+            && (
+              steps.detect.outputs.severity == 'danger'
+              || (github.event_name == 'workflow_dispatch' && (github.event.inputs.mode == 'realtime' || github.event.inputs.mode == 'all'))
+              || (github.event_name == 'schedule' && github.event.schedule == '5 */8 * * *')
+            )
           }}
         env:
           SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
@@ -202,9 +224,12 @@ jobs:
       - name: Send SNS email realtime notification
         if: >-
           ${{
-            steps.detect.outputs.severity == 'danger'
-            || (github.event_name == 'workflow_dispatch' && (github.event.inputs.mode == 'realtime' || github.event.inputs.mode == 'all'))
-            || (github.event_name == 'schedule' && github.event.schedule == '5 */8 * * *')
+            steps.period_guard.outputs.in_window == 'true'
+            && (
+              steps.detect.outputs.severity == 'danger'
+              || (github.event_name == 'workflow_dispatch' && (github.event.inputs.mode == 'realtime' || github.event.inputs.mode == 'all'))
+              || (github.event_name == 'schedule' && github.event.schedule == '5 */8 * * *')
+            )
           }}
         env:
           ALERT_SNS_TOPIC_ARN: ${{ secrets.ALERT_SNS_TOPIC_ARN }}
@@ -228,7 +253,25 @@ jobs:
       }}
     runs-on: ubuntu-latest
     steps:
+      - name: Check orchestration period window
+        id: period_guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_EVENT_NAME}" != "schedule" ]; then
+            echo "in_window=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          today_kst="$(TZ=Asia/Seoul date +%Y-%m-%d)"
+          if [[ "$today_kst" < "2026-02-27" || "$today_kst" > "2026-03-11" ]]; then
+            echo "in_window=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "in_window=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Configure AWS credentials
+        if: ${{ steps.period_guard.outputs.in_window == 'true' }}
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
@@ -236,42 +279,55 @@ jobs:
           aws-region: ${{ secrets.AWS_REGION }}
 
       - name: Detect low-utilization candidates
+        if: ${{ steps.period_guard.outputs.in_window == 'true' }}
         id: lowutil
         shell: bash
         env:
-          LOW_CPU_THRESHOLD: ${{ vars.EC2_LOW_CPU_THRESHOLD }}
-          LOW_CPU_DAYS: ${{ vars.EC2_LOW_CPU_DAYS }}
+          IDLE_CPU_THRESHOLD: ${{ vars.EC2_IDLE_CPU_THRESHOLD }}
+          IDLE_NETWORK_BPS_THRESHOLD: ${{ vars.EC2_IDLE_NETWORK_BPS_THRESHOLD }}
+          IDLE_DISK_BPS_THRESHOLD: ${{ vars.EC2_IDLE_DISK_BPS_THRESHOLD }}
+          IDLE_LOOKBACK_HOURS: ${{ vars.EC2_IDLE_LOOKBACK_HOURS }}
         run: |
           set -euo pipefail
 
-          low_cpu_threshold="${LOW_CPU_THRESHOLD:-5}"
-          low_cpu_days="${LOW_CPU_DAYS:-7}"
+          idle_cpu_threshold="${IDLE_CPU_THRESHOLD:-3}"
+          idle_network_threshold="${IDLE_NETWORK_BPS_THRESHOLD:-50000}"
+          idle_disk_threshold="${IDLE_DISK_BPS_THRESHOLD:-50000}"
+          lookback_hours="${IDLE_LOOKBACK_HOURS:-24}"
           generated_at_kst="$(TZ=Asia/Seoul date "+%Y-%m-%d %H:%M:%S %Z")"
           now_utc="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
-          start_utc="$(date -u -d "${low_cpu_days} days ago" +"%Y-%m-%dT%H:%M:%SZ")"
+          start_utc="$(date -u -d "${lookback_hours} hours ago" +"%Y-%m-%dT%H:%M:%SZ")"
 
           regions=$(aws ec2 describe-regions --query "Regions[].RegionName" --output text)
           candidates=""
+          keepalive_excluded=0
           total_running=0
 
           for region in $regions; do
             rows=$(aws ec2 describe-instances \
               --region "$region" \
               --filters "Name=instance-state-name,Values=running" \
-              --query "Reservations[].Instances[].[InstanceId,InstanceType,Tags[?Key=='Name']|[0].Value]" \
+              --query "Reservations[].Instances[].[InstanceId,InstanceType,Tags[?Key=='Name']|[0].Value,Tags[?Key=='keep_alive']|[0].Value]" \
               --output text)
 
             if [ -z "$rows" ] || [ "$rows" = "None" ]; then
               continue
             fi
 
-            while IFS=$'\t' read -r instance_id instance_type name; do
+            while IFS=$'\t' read -r instance_id instance_type name keep_alive; do
               if [ -z "${instance_id:-}" ] || [ "${instance_id:-None}" = "None" ]; then
                 continue
               fi
               total_running=$((total_running + 1))
               if [ -z "${name:-}" ] || [ "${name:-None}" = "None" ]; then
                 name="-"
+              fi
+              if [ -z "${keep_alive:-}" ] || [ "${keep_alive:-None}" = "None" ]; then
+                keep_alive="false"
+              fi
+              if [ "$keep_alive" = "true" ]; then
+                keepalive_excluded=$((keepalive_excluded + 1))
+                continue
               fi
 
               avg_cpu=$(aws cloudwatch get-metric-statistics \
@@ -286,9 +342,57 @@ jobs:
                 --query "Datapoints[].Average" \
                 --output text | tr '\t' '\n' | awk 'NF {sum+=$1; cnt+=1} END {if (cnt>0) printf "%.2f", sum/cnt; else print "0"}')
 
-              is_low=$(awk -v avg="$avg_cpu" -v th="$low_cpu_threshold" 'BEGIN { if (avg+0 <= th+0) print 1; else print 0 }')
-              if [ "$is_low" = "1" ]; then
-                candidates="${candidates}"$'\n'"- [${region}] ${instance_id} (${name}, ${instance_type}) : ${low_cpu_days}일 평균 CPU ${avg_cpu}%"
+              avg_net_in=$(aws cloudwatch get-metric-statistics \
+                --region "$region" \
+                --namespace AWS/EC2 \
+                --metric-name NetworkIn \
+                --dimensions Name=InstanceId,Value="$instance_id" \
+                --start-time "$start_utc" \
+                --end-time "$now_utc" \
+                --period 3600 \
+                --statistics Average \
+                --query "Datapoints[].Average" \
+                --output text | tr '\t' '\n' | awk 'NF {sum+=$1; cnt+=1} END {if (cnt>0) printf "%.2f", sum/cnt; else print "0"}')
+              avg_net_out=$(aws cloudwatch get-metric-statistics \
+                --region "$region" \
+                --namespace AWS/EC2 \
+                --metric-name NetworkOut \
+                --dimensions Name=InstanceId,Value="$instance_id" \
+                --start-time "$start_utc" \
+                --end-time "$now_utc" \
+                --period 3600 \
+                --statistics Average \
+                --query "Datapoints[].Average" \
+                --output text | tr '\t' '\n' | awk 'NF {sum+=$1; cnt+=1} END {if (cnt>0) printf "%.2f", sum/cnt; else print "0"}')
+              avg_disk_read=$(aws cloudwatch get-metric-statistics \
+                --region "$region" \
+                --namespace AWS/EC2 \
+                --metric-name DiskReadBytes \
+                --dimensions Name=InstanceId,Value="$instance_id" \
+                --start-time "$start_utc" \
+                --end-time "$now_utc" \
+                --period 3600 \
+                --statistics Average \
+                --query "Datapoints[].Average" \
+                --output text | tr '\t' '\n' | awk 'NF {sum+=$1; cnt+=1} END {if (cnt>0) printf "%.2f", sum/cnt; else print "0"}')
+              avg_disk_write=$(aws cloudwatch get-metric-statistics \
+                --region "$region" \
+                --namespace AWS/EC2 \
+                --metric-name DiskWriteBytes \
+                --dimensions Name=InstanceId,Value="$instance_id" \
+                --start-time "$start_utc" \
+                --end-time "$now_utc" \
+                --period 3600 \
+                --statistics Average \
+                --query "Datapoints[].Average" \
+                --output text | tr '\t' '\n' | awk 'NF {sum+=$1; cnt+=1} END {if (cnt>0) printf "%.2f", sum/cnt; else print "0"}')
+              avg_network=$(awk -v n1="$avg_net_in" -v n2="$avg_net_out" 'BEGIN { printf "%.2f", n1+n2 }')
+              avg_disk=$(awk -v d1="$avg_disk_read" -v d2="$avg_disk_write" 'BEGIN { printf "%.2f", d1+d2 }')
+
+              is_idle=$(awk -v cpu="$avg_cpu" -v cth="$idle_cpu_threshold" -v net="$avg_network" -v nth="$idle_network_threshold" -v disk="$avg_disk" -v dth="$idle_disk_threshold" \
+                'BEGIN { if (cpu+0 <= cth+0 && net+0 <= nth+0 && disk+0 <= dth+0) print 1; else print 0 }')
+              if [ "$is_idle" = "1" ]; then
+                candidates="${candidates}"$'\n'"- [${region}] ${instance_id} (${name}, ${instance_type}) : CPU=${avg_cpu}% | Network=${avg_network}B/s | Disk=${avg_disk}B/s"
               fi
             done <<< "$rows"
           done
@@ -296,12 +400,12 @@ jobs:
           if [ -z "$candidates" ]; then
             severity="good"
             title="EC2 비용 최적화 점검 - 대상 없음"
-            message=$(printf "[EC2 비용 최적화 점검]\n- 조회 시각(KST): %s\n- 실행 중 인스턴스 수: %s개\n- 결과: 저사용 임계치 이하 인스턴스 없음" "$generated_at_kst" "$total_running")
+            message=$(printf "[EC2 비용 최적화 점검]\n- 조회 시각(KST): %s\n- 실행 중 인스턴스 수: %s개\n- keep_alive 제외 수: %s개\n- 기준: %s시간 평균 CPU/Network/Disk 임계치\n- 결과: 저사용 임계치 이하 인스턴스 없음" "$generated_at_kst" "$total_running" "$keepalive_excluded" "$lookback_hours")
           else
             severity="warning"
             title="EC2 저사용 인스턴스 감지 - 스케일다운/스케줄 정지 검토"
             run_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
-            message=$(printf "[EC2 비용 최적화 후보]\n- 조회 시각(KST): %s\n- 실행 중 인스턴스 수: %s개\n- 기준: %s일 평균 CPU <= %s%%\n- 후보:%s\n\n[권장 조치]\n1) 야간/주말 스케줄 정지 대상 편입\n2) 인스턴스 타입 다운사이징 검토\n3) 장기 미사용이면 중단 또는 삭제\n- 실행 상세: %s" "$generated_at_kst" "$total_running" "$low_cpu_days" "$low_cpu_threshold" "$candidates" "$run_url")
+            message=$(printf "[EC2 비용 최적화 후보]\n- 조회 시각(KST): %s\n- 실행 중 인스턴스 수: %s개\n- keep_alive 제외 수: %s개\n- 기준: %s시간 평균 CPU<=%s%% AND Network<=%sB/s AND Disk<=%sB/s\n- 후보:%s\n\n[권장 조치]\n1) 야간/주말 스케줄 정지 대상 편입\n2) 인스턴스 타입 다운사이징 검토\n3) 장기 미사용이면 중단 또는 삭제\n- 실행 상세: %s" "$generated_at_kst" "$total_running" "$keepalive_excluded" "$lookback_hours" "$idle_cpu_threshold" "$idle_network_threshold" "$idle_disk_threshold" "$candidates" "$run_url")
           fi
 
           {
@@ -315,8 +419,11 @@ jobs:
       - name: Send Slack cost notification
         if: >-
           ${{
-            steps.lowutil.outputs.severity == 'warning'
-            || (github.event_name == 'workflow_dispatch' && (github.event.inputs.mode == 'cost' || github.event.inputs.mode == 'all'))
+            steps.period_guard.outputs.in_window == 'true'
+            && (
+              steps.lowutil.outputs.severity == 'warning'
+              || (github.event_name == 'workflow_dispatch' && (github.event.inputs.mode == 'cost' || github.event.inputs.mode == 'all'))
+            )
           }}
         env:
           SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
@@ -334,8 +441,11 @@ jobs:
       - name: Send SNS email cost notification
         if: >-
           ${{
-            steps.lowutil.outputs.severity == 'warning'
-            || (github.event_name == 'workflow_dispatch' && (github.event.inputs.mode == 'cost' || github.event.inputs.mode == 'all'))
+            steps.period_guard.outputs.in_window == 'true'
+            && (
+              steps.lowutil.outputs.severity == 'warning'
+              || (github.event_name == 'workflow_dispatch' && (github.event.inputs.mode == 'cost' || github.event.inputs.mode == 'all'))
+            )
           }}
         env:
           ALERT_SNS_TOPIC_ARN: ${{ secrets.ALERT_SNS_TOPIC_ARN }}
