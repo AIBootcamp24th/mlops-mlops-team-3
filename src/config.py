@@ -12,10 +12,16 @@ class Settings(BaseSettings):
     aws_s3_model_bucket: str = Field(default="", alias="AWS_S3_MODEL_BUCKET")
     aws_s3_pred_bucket: str = Field(default="", alias="AWS_S3_PRED_BUCKET")
     train_queue_url: str = Field(default="", alias="TRAIN_QUEUE_URL")
+    infer_queue_url: str = Field(default="", alias="INFER_QUEUE_URL")
+    train_seed: int = Field(default=42, alias="TRAIN_SEED")
 
     wandb_api_key: str = Field(default="", alias="WANDB_API_KEY")
     wandb_project: str = Field(default="tmdb-rating-mlops", alias="WANDB_PROJECT")
     wandb_entity: str = Field(default="", alias="WANDB_ENTITY")
+    quality_gate_val_rmse_max: float = Field(default=1.2, alias="QUALITY_GATE_VAL_RMSE_MAX")
+    quality_gate_out_of_range_max: float = Field(
+        default=0.05, alias="QUALITY_GATE_OUT_OF_RANGE_MAX"
+    )
 
     slack_bot_token: str = Field(default="", alias="SLACK_BOT_TOKEN")
     slack_channel_id: str = Field(default="", alias="SLACK_CHANNEL_ID")

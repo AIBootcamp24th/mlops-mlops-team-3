@@ -1,11 +1,10 @@
 name: CI
 
 on:
-  # 인프라 미구현 기간에는 자동 CI/CD를 잠시 중단합니다.
-  # push:
-  #   branches: [main]
-  # pull_request:
-  #   branches: [main]
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 jobs:
@@ -14,6 +13,19 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Resolve project directory
+        id: project_dir
+        shell: bash
+        run: |
+          if [ -f "pyproject.toml" ]; then
+            echo "path=." >> "$GITHUB_OUTPUT"
+          elif [ -f "mlops_project/pyproject.toml" ]; then
+            echo "path=mlops_project" >> "$GITHUB_OUTPUT"
+          else
+            echo "pyproject.toml을 찾을 수 없습니다." >&2
+            exit 1
+          fi
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -24,12 +36,26 @@ jobs:
         uses: astral-sh/setup-uv@v3
 
       - name: Install dependencies
+        working-directory: ${{ steps.project_dir.outputs.path }}
         run: uv sync --dev
 
       - name: Ruff
+        working-directory: ${{ steps.project_dir.outputs.path }}
         run: uv run ruff check .
 
       - name: Pytest
+        working-directory: ${{ steps.project_dir.outputs.path }}
         run: uv run pytest -q
 
-  # 필요 시 이 워크플로우에 Slack 알림 잡을 직접 추가해 사용합니다.
+      - name: Quality Gate
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        working-directory: ${{ steps.project_dir.outputs.path }}
+        run: uv run python scripts/register_model.py
+        env:
+          PYTHONPATH: ${{ github.workspace }}/${{ steps.project_dir.outputs.path }}
+          WANDB_API_KEY: ${{ secrets.WANDB_API_KEY }}
+          WANDB_PROJECT: ${{ secrets.WANDB_PROJECT }}
+          WANDB_ENTITY: ${{ secrets.WANDB_ENTITY }}
+          QUALITY_GATE_REQUIRED: "false"
+          QUALITY_GATE_VAL_RMSE_MAX: "1.2"
+          QUALITY_GATE_OUT_OF_RANGE_MAX: "0.05"

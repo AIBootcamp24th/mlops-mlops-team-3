@@ -1,0 +1,215 @@
+name: EC2 Queue Autoscale
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "대상 role 선택 (train/infer/all)"
+        required: false
+        default: all
+        type: choice
+        options:
+          - train
+          - infer
+          - all
+  schedule:
+    - cron: "*/5 * * * *"
+
+permissions:
+  contents: read
+
+jobs:
+  autoscale:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check orchestration period window
+        id: period_guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_EVENT_NAME}" != "schedule" ]; then
+            echo "in_window=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          today_kst="$(TZ=Asia/Seoul date +%Y-%m-%d)"
+          if [[ "$today_kst" < "2026-02-27" || "$today_kst" > "2026-03-11" ]]; then
+            echo "in_window=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "in_window=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Configure AWS credentials
+        if: ${{ steps.period_guard.outputs.in_window == 'true' }}
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Scale workers by SQS backlog
+        if: ${{ steps.period_guard.outputs.in_window == 'true' }}
+        id: autoscale
+        shell: bash
+        env:
+          INPUT_TARGET: ${{ github.event.inputs.target }}
+          TRAIN_QUEUE_URL: ${{ secrets.TRAIN_QUEUE_URL }}
+          INFER_QUEUE_URL: ${{ secrets.INFER_QUEUE_URL }}
+          TRAIN_SCALE_OUT_THRESHOLD: ${{ vars.TRAIN_QUEUE_SCALE_OUT_THRESHOLD }}
+          INFER_SCALE_OUT_THRESHOLD: ${{ vars.INFER_QUEUE_SCALE_OUT_THRESHOLD }}
+          SCALE_IN_IDLE_MINUTES: ${{ vars.QUEUE_SCALE_IN_IDLE_MINUTES }}
+          SCALE_IN_IDLE_CPU_THRESHOLD: ${{ vars.QUEUE_IDLE_CPU_THRESHOLD }}
+        run: |
+          set -euo pipefail
+
+          target="${INPUT_TARGET:-all}"
+          train_threshold="${TRAIN_SCALE_OUT_THRESHOLD:-1}"
+          infer_threshold="${INFER_SCALE_OUT_THRESHOLD:-1}"
+          idle_minutes="${SCALE_IN_IDLE_MINUTES:-20}"
+          idle_cpu_threshold="${SCALE_IN_IDLE_CPU_THRESHOLD:-3}"
+          now_utc="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+          start_idle_utc="$(date -u -d "${idle_minutes} minutes ago" +"%Y-%m-%dT%H:%M:%SZ")"
+          generated_at_kst="$(TZ=Asia/Seoul date "+%Y-%m-%d %H:%M:%S %Z")"
+
+          roles=()
+          case "$target" in
+            train) roles=("train") ;;
+            infer) roles=("infer") ;;
+            all|"") roles=("train" "infer") ;;
+            *)
+              echo "지원하지 않는 target 값입니다: ${target}"
+              exit 1
+              ;;
+          esac
+
+          total_started=0
+          total_stopped=0
+          details=""
+
+          for role in "${roles[@]}"; do
+            queue_url=""
+            scale_out_threshold="1"
+            if [ "$role" = "train" ]; then
+              queue_url="${TRAIN_QUEUE_URL:-}"
+              scale_out_threshold="${train_threshold}"
+            else
+              queue_url="${INFER_QUEUE_URL:-}"
+              scale_out_threshold="${infer_threshold}"
+            fi
+
+            if [ -z "$queue_url" ]; then
+              details="${details}"$'\n'"- role=${role}: queue URL 미설정으로 건너뜀"
+              continue
+            fi
+
+            visible=$(aws sqs get-queue-attributes \
+              --queue-url "$queue_url" \
+              --attribute-names ApproximateNumberOfMessages \
+              --query "Attributes.ApproximateNumberOfMessages" \
+              --output text)
+            inflight=$(aws sqs get-queue-attributes \
+              --queue-url "$queue_url" \
+              --attribute-names ApproximateNumberOfMessagesNotVisible \
+              --query "Attributes.ApproximateNumberOfMessagesNotVisible" \
+              --output text)
+            [ -z "${visible:-}" ] || [ "$visible" = "None" ] && visible="0"
+            [ -z "${inflight:-}" ] || [ "$inflight" = "None" ] && inflight="0"
+            backlog=$((visible + inflight))
+
+            rows=$(aws ec2 describe-instances \
+              --filters \
+                "Name=tag:role,Values=${role}" \
+                "Name=tag:env,Values=prod" \
+                "Name=instance-state-name,Values=running,stopped" \
+              --query "Reservations[].Instances[].[InstanceId,State.Name,Tags[?Key=='Name']|[0].Value,Tags[?Key=='keep_alive']|[0].Value]" \
+              --output text)
+
+            start_ids=()
+            stop_ids=()
+            running_count=0
+            stopped_count=0
+
+            if [ -n "${rows:-}" ] && [ "${rows}" != "None" ]; then
+              while IFS=$'\t' read -r instance_id state name keep_alive; do
+                if [ -z "${instance_id:-}" ] || [ "${instance_id}" = "None" ]; then
+                  continue
+                fi
+                if [ -z "${keep_alive:-}" ] || [ "${keep_alive:-None}" = "None" ]; then
+                  keep_alive="false"
+                fi
+                if [ "$state" = "running" ]; then
+                  running_count=$((running_count + 1))
+                elif [ "$state" = "stopped" ]; then
+                  stopped_count=$((stopped_count + 1))
+                fi
+
+                if [ "$backlog" -ge "$scale_out_threshold" ] && [ "$state" = "stopped" ]; then
+                  start_ids+=("${instance_id}")
+                fi
+
+                if [ "$backlog" -eq 0 ] && [ "$state" = "running" ] && [ "$keep_alive" != "true" ]; then
+                  avg_cpu=$(aws cloudwatch get-metric-statistics \
+                    --namespace AWS/EC2 \
+                    --metric-name CPUUtilization \
+                    --dimensions Name=InstanceId,Value="$instance_id" \
+                    --start-time "$start_idle_utc" \
+                    --end-time "$now_utc" \
+                    --period 300 \
+                    --statistics Average \
+                    --query "Datapoints[].Average" \
+                    --output text | tr '\t' '\n' | awk 'NF {sum+=$1; cnt+=1} END {if (cnt>0) printf "%.2f", sum/cnt; else print "0"}')
+                  is_idle=$(awk -v avg="$avg_cpu" -v th="$idle_cpu_threshold" 'BEGIN { if (avg+0 <= th+0) print 1; else print 0 }')
+                  if [ "$is_idle" = "1" ]; then
+                    stop_ids+=("${instance_id}")
+                  fi
+                fi
+              done <<< "$rows"
+            fi
+
+            if [ "${#start_ids[@]}" -gt 0 ]; then
+              aws ec2 start-instances --instance-ids "${start_ids[@]}" >/dev/null
+              total_started=$((total_started + ${#start_ids[@]}))
+            fi
+
+            if [ "${#stop_ids[@]}" -gt 0 ]; then
+              aws ec2 stop-instances --instance-ids "${stop_ids[@]}" >/dev/null
+              total_stopped=$((total_stopped + ${#stop_ids[@]}))
+            fi
+
+            details="${details}"$'\n'"- role=${role}: backlog=${backlog} (visible=${visible}, inflight=${inflight}), running=${running_count}, stopped=${stopped_count}, start=${#start_ids[@]}, stop=${#stop_ids[@]}"
+          done
+
+          severity="good"
+          if [ "$total_started" -gt 0 ] || [ "$total_stopped" -gt 0 ]; then
+            severity="warning"
+          fi
+
+          message=$(printf "[EC2 Queue Autoscale]\n- 조회 시각(KST): %s\n- 대상 role: %s\n- scale-out 임계치(train/infer): %s/%s\n- scale-in 기준: backlog=0 + %s분 평균 CPU <= %s%%\n- 처리 결과: start=%s, stop=%s\n- 상세:%s" \
+            "$generated_at_kst" "$target" "$train_threshold" "$infer_threshold" "$idle_minutes" "$idle_cpu_threshold" "$total_started" "$total_stopped" "$details")
+
+          {
+            echo "severity=${severity}"
+            echo "slack_message<<EOF"
+            echo "${message}"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Send Slack autoscale notification
+        if: >-
+          ${{
+            steps.period_guard.outputs.in_window == 'true'
+            && (
+              steps.autoscale.outputs.severity == 'warning'
+              || github.event_name == 'workflow_dispatch'
+            )
+          }}
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_CHANNEL_ID: ${{ secrets.SLACK_CHANNEL_ID }}
+          MESSAGE: ${{ steps.autoscale.outputs.slack_message }}
+        run: |
+          payload=$(python -c "import json, os; print(json.dumps({'channel': os.environ['SLACK_CHANNEL_ID'], 'attachments': [{'color': 'warning', 'title': 'EC2 Queue Autoscale 실행 결과', 'text': os.environ['MESSAGE']}]}))")
+          curl -sS -X POST https://slack.com/api/chat.postMessage \
+            -H "Authorization: Bearer ${SLACK_BOT_TOKEN}" \
+            -H "Content-Type: application/json; charset=utf-8" \
+            --data "${payload}"
