@@ -30,6 +30,20 @@
 
 <!-- contribution-table:end -->
 
+
+### 기여도 (main 브랜치 커밋 기준)
+
+`main` 브랜치의 `git shortlog -sne main` 결과를 기준으로, `shields.io` 배지로 자동 렌더링합니다.
+<!-- contribution-table:start -->
+| 팀원 (이름 + GitHub) | 기여도 |
+| --- | ---: |
+| [송민성 (@alstjd0051)](https://github.com/alstjd0051) | ![contribution](https://img.shields.io/badge/contribution-54.41%25-2ea043?style=for-the-badge&logo=github) |
+| [유준우 (팀장) (@joonwoo-yoo)](https://github.com/joonwoo-yoo) | ![contribution](https://img.shields.io/badge/contribution-45.59%25-1f6feb?style=for-the-badge&logo=github) |
+| [문성호 (@Eclipse-Universe)](https://github.com/Eclipse-Universe) | ![contribution](https://img.shields.io/badge/contribution-0.00%25-9e9e9e?style=for-the-badge&logo=github) |
+| [송용단 (@totalintelli)](https://github.com/totalintelli) | ![contribution](https://img.shields.io/badge/contribution-0.00%25-9e9e9e?style=for-the-badge&logo=github) |
+| [이재석 (@wotjrzm)](https://github.com/wotjrzm) | ![contribution](https://img.shields.io/badge/contribution-0.00%25-9e9e9e?style=for-the-badge&logo=github) |
+<!-- contribution-table:end -->
+
 ## 3. 업무 분담
 
 ### MLOps

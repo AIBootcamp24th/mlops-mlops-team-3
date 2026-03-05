@@ -16,13 +16,25 @@ BOT_KEYWORDS = ("[bot]", "github-classroom")
 
 
 def run_git_shortlog_main() -> list[str]:
-    result = subprocess.run(
-        ["git", "shortlog", "-sne", "main"],
-        capture_output=True,
-        text=True,
-        check=True,
+    # GitHub Actions에서는 detached HEAD 상태라 local `main` 브랜치가 없을 수 있어 fallback을 사용한다.
+    fallback_refs = ("main", "origin/main", "refs/remotes/origin/main", "HEAD")
+    last_stderr = ""
+
+    for ref in fallback_refs:
+        result = subprocess.run(
+            ["git", "shortlog", "-sne", ref],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode == 0:
+            return [line.rstrip() for line in result.stdout.splitlines() if line.strip()]
+        last_stderr = (result.stderr or "").strip()
+
+    raise RuntimeError(
+        "git shortlog 실행에 실패했습니다. "
+        f"시도한 ref: {', '.join(fallback_refs)} / 오류: {last_stderr}"
     )
-    return [line.rstrip() for line in result.stdout.splitlines() if line.strip()]
 
 
 def normalize(value: str) -> str:

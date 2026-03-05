@@ -23,18 +23,17 @@ jobs:
           python-version: "3.11"
 
       - name: Update contribution table
-        working-directory: mlops_project
         run: python scripts/update_contribution_badges.py
 
       - name: Commit and push if changed
         run: |
-          if git diff --quiet -- mlops_project/README.md; then
+          if git diff --quiet -- README.md; then
             echo "README 변경사항 없음"
             exit 0
           fi
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add mlops_project/README.md
+          git add README.md
           git commit -m "문서: main 브랜치 기준 기여도 자동 갱신"
           git push
