@@ -43,7 +43,7 @@ app.command("/mlops-alert", async ({ command, ack, respond }) => {
   if (command.channel_id !== targetChannelId) {
     await respond({
       response_type: "ephemeral",
-      text: "이 명령어는 #1차_스터디_그룹_3조 채널에서만 사용할 수 있습니다.",
+      text: "이 명령어는 #3조-모니터링 채널에서만 사용할 수 있습니다.",
     });
     return;
   }
