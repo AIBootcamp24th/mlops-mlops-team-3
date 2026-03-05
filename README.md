@@ -51,11 +51,13 @@ graph LR
   D[Airflow Train Dispatch] --> E[SQS train-queue]
   E --> F[Python Worker]
   F --> G[S3 Raw Data Download]
-  F --> H[PyTorch Training]
-  H --> I[W&B Logging and Artifact]
-  H --> J[S3 Model Upload]
+  F --> H[StandardScaler plus PyTorch Training]
+  H --> I[W&B Artifact candidate and champion alias]
+  H --> J[S3 Immutable Model Upload models runs run_id]
+  I --> R[Register Champion]
+  R --> S[S3 Champion Registry models registry champion json]
   F --> K[Slack Custom Notification]
-  L[Batch Inference Worker] --> J
+  L[Batch Inference Worker] --> S
   L --> M[S3 Prediction Output]
   L --> I
 ```
@@ -91,6 +93,10 @@ cp .env.example .env
 - 역할: Airflow가 SQS 학습/배치추론 트리거를 오케스트레이션
 - 학습 메시지 전략: `scripts/send_sqs_message.py`가 W&B의 최근 성능 기준으로 best profile 1건을 선택해 SQS에 전송 (조회 실패 시 baseline 폴백)
 - 품질 게이트 정책: Airflow DAG의 `quality_gate_candidate`는 기본적으로 비차단 모드(`QUALITY_GATE_REQUIRED=false`)로 경고만 기록하고 DAG는 성공 처리
+- 챔피언 전략:
+  - W&B: 품질 게이트 통과 run 중 최적 후보를 `champion` alias로 사용
+  - S3: 모델 파일은 `models/runs/{run_id}/rating_model.pt` immutable 키 유지 + 버킷 Versioning 사용
+  - 레지스트리: `scripts/register_model.py`가 `models/registry/champion.json` 포인터를 갱신하고, 추론은 이 포인터를 조회해 실제 모델 키를 결정
 
 ## 9. 예측 API 서비스
 
@@ -171,7 +177,8 @@ uv run python -m src.train.run_train
 - 실험 추적(권장): `val_out_of_range_ratio`도 함께 모니터링
 - 실험 config: `tuning_profile`, `learning_rate`, `hidden_dims`, `dropout`, `epochs`, `batch_size`, `seed`
 - 아티팩트: 학습 완료 모델 파일 업로드
-- 모델 관리(MVP): `scripts/register_model.py`가 품질 게이트를 통과한 run을 선별해
+- 모델 관리(MVP): `scripts/register_model.py`가 품질 게이트를 통과한 run 중 최적 후보를 선별해
+  W&B `champion` 태그 기준 메타데이터를 `models/registry/champion.json`에 기록하고
   `artifacts/model_registry_candidate.json`를 생성
 - 비차단 품질 게이트: `QUALITY_GATE_REQUIRED=false`인 경우 통과 run이 없어도 경고 로그만 남기고 종료
 
