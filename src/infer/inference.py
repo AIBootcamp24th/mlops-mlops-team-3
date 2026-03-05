@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 import torch
 
-from src.config import INPUT_DIM, RESULT_DIR
+from src.config import RESULT_DIR
 from src.model.network import RatingPredictor
 
 
@@ -27,7 +27,8 @@ def predict():
         print("에러: 필요한 파일(model, scaler, movies.csv) 중 일부가 없습니다.")
         return
 
-    input_dim = INPUT_DIM
+    feature_cols = ["watch_ratio", "popularity", "runtime", "budget"]
+    input_dim = len(feature_cols)
     model = RatingPredictor(input_dim=input_dim).to(device)
     model.load_state_dict(torch.load(model_path, map_location=device))
     model.eval()
@@ -85,8 +86,6 @@ def predict():
                 print("숫자만 입력 가능합니다.")
                 continue
 
-        movie = target_movie.iloc[0]
-
         country_data = str(movie.get("origin_country", "")).upper()
         original_lang = str(movie.get("original_language", "")).lower()
 
@@ -112,7 +111,7 @@ def predict():
 
         raw_input = pd.DataFrame(
             [[watch_ratio, clean_popularity, clean_runtime, clean_budget]],
-            columns=["watch_ratio", "popularity", "runtime", "budget"],
+            columns=feature_cols,
         )
 
         scaled_input = scaler.transform(raw_input)
@@ -126,15 +125,7 @@ def predict():
         with torch.no_grad():
             prediction = model(input_tensor)
             result = prediction.item()
-
-            predicted_rating = (result * 15.0) + 5.0
-
-            if watch_ratio > 0.85:
-                predicted_rating += 1.5
-            elif watch_ratio < 0.75:
-                predicted_rating -= 0.5
-
-            predicted_rating = np.clip(predicted_rating, 1.0, 9.5)
+            predicted_rating = np.clip(result * 10.0, 0.0, 10.0)
 
         print(f"\n\t(1) 모델이 분석한 예상 평점: {predicted_rating:.2f} / 10.0 점")
         print(f"\t(2) 실제 TMDB 평점: {movie['vote_average']:.2f} / 10.0 점")

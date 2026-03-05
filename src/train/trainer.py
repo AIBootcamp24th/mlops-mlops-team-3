@@ -1,13 +1,42 @@
 import os
 
+import numpy as np
 import pandas as pd
 import torch
 import torch.optim as optim
+from sklearn.metrics import mean_squared_error
+from torch import nn
 from torch.utils.data import DataLoader
 
-from src.config import BATCH_SIZE, EPOCHS, RESULT_DIR
+from src.config import BATCH_SIZE, EPOCHS, LR, RESULT_DIR
 from src.data.dataset import RatingsDataset
 from src.model.network import RatingPredictor
+
+
+def train_one_epoch(model: nn.Module, loader: DataLoader, optimizer: torch.optim.Optimizer) -> float:
+    model.train()
+    criterion = nn.MSELoss()
+    losses: list[float] = []
+    for x_batch, y_batch in loader:
+        optimizer.zero_grad()
+        pred = model(x_batch)
+        loss = criterion(pred, y_batch)
+        loss.backward()
+        optimizer.step()
+        losses.append(float(loss.detach().cpu().item()))
+    return float(np.mean(losses)) if losses else 0.0
+
+
+@torch.no_grad()
+def evaluate(model: nn.Module, loader: DataLoader) -> float:
+    model.eval()
+    y_true: list[float] = []
+    y_pred: list[float] = []
+    for x_batch, y_batch in loader:
+        pred = model(x_batch)
+        y_true.extend(y_batch.view(-1).tolist())
+        y_pred.extend(pred.view(-1).tolist())
+    return float(np.sqrt(mean_squared_error(y_true, y_pred)))
 
 
 def train():
@@ -20,7 +49,7 @@ def train():
 
     df = pd.read_csv(processed_path)
 
-    train_features = ["rating", "popularity", "runtime", "budget"]
+    train_features = ["watch_ratio", "popularity", "runtime", "budget"]
 
     dataset = RatingsDataset(df, feature_cols=train_features, target_col="target_rating")
 
@@ -29,8 +58,7 @@ def train():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = RatingPredictor(input_dim=len(train_features)).to(device)
 
-    criterion = torch.nn.BCELoss()
-    optimizer = optim.Adam(model.parameters(), lr=0.001)
+    optimizer = optim.Adam(model.parameters(), lr=LR)
 
     model.train()
     print(f"학습 시작 (Device: {device})")

@@ -10,8 +10,9 @@ class TMDBCollector:
         self.api_key = api_key
         self.base_url = "https://api.themoviedb.org/3"
 
-    def fetch_tmdb_data(self, max_pages=50) -> pd.DataFrame:
+    def fetch_tmdb_data(self, max_pages=50, total_page=None) -> pd.DataFrame:
         all_movies = []
+        page_limit = total_page if total_page is not None else max_pages
 
         if not self.api_key:
             print("에러: .env 파일에 TMDB_API_KEY가 존재하지 않습니다.")
@@ -19,7 +20,7 @@ class TMDBCollector:
 
         discover_url = f"{self.base_url}/discover/movie"
 
-        for page in tqdm(range(1, max_pages + 1), desc="TMDB 데이터 페이지 수집 시작"):
+        for page in tqdm(range(1, page_limit + 1), desc="TMDB 데이터 페이지 수집 시작"):
             params = {
                 "api_key": self.api_key,
                 "language": "ko-KR",

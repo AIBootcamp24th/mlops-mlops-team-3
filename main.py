@@ -10,8 +10,6 @@ from src.data.dataset import RatingsDataset
 from src.data.preprocessor import DataPreprocessor
 
 load_dotenv()
-API_KEY = os.getenv("TMDB_API_KEY")
-URL = os.getenv("TMDB_BASE_URL")
 
 
 def main():
@@ -21,7 +19,7 @@ def main():
 
     if not os.path.exists(RAW_DATA_PATH) or force_update:
         collector = TMDBCollector(api_key)
-        df_raw = collector.fetch_tmdb_data(total_page=TOTAL_PAGES)
+        df_raw = collector.fetch_tmdb_data(max_pages=TOTAL_PAGES)
 
         if not df_raw.empty:
             os.makedirs(os.path.dirname(RAW_DATA_PATH), exist_ok=True)
@@ -37,6 +35,10 @@ def main():
             return
 
     essential_features = ["budget", "runtime", "popularity", "vote_count", "vote_average", "id"]
+    missing_columns = [col for col in essential_features if col not in df_raw.columns]
+    if missing_columns:
+        print(f"에러: 필수 컬럼이 없습니다: {missing_columns}")
+        return
 
     df_filtered = df_raw[essential_features].copy()
 
