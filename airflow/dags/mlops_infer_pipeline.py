@@ -7,7 +7,15 @@ from airflow.datasets import Dataset
 from airflow.operators.bash import BashOperator
 from airflow.operators.python import PythonOperator
 
-INFER_DISPATCH_DATASET = Dataset("s3://team-prj-group3/mlops/datasets/infer-dispatch")
+DATASET_DOCS_URL = "https://github.com/AIBootcamp24th/mlops-mlops-team-3/tree/main/mlops_project/docs"
+INFER_DISPATCH_DATASET = Dataset(
+    "s3://team-prj-group3/mlops/datasets/infer-dispatch",
+    extra={
+        "description": "배치 추론 디스패치 메시지 생성 결과 데이터셋",
+        "owner": "mlops-team3",
+        "docs_url": DATASET_DOCS_URL,
+    },
+)
 
 
 def validate_runtime_env() -> None:
@@ -34,6 +42,7 @@ def validate_runtime_env() -> None:
 
 with DAG(
     dag_id="mlops_infer_pipeline",
+    default_args={"owner": "mlops-team3"},
     start_date=datetime(2026, 2, 27),
     end_date=datetime(2026, 3, 11, 23, 59, 59),
     schedule="30 2 * * *",
