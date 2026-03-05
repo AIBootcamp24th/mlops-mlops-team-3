@@ -116,7 +116,7 @@ def _build_user_history(items: list[UserHistoryItem]) -> list[RatedMovie]:
     return history
 
 
-@app.get("/health", response_model=HealthResponse, summary="헬스체크", tags=["System"])
+@app.get("/health", response_model=HealthResponse, summary="헬스체크", tags=["헬스체크"])
 def health() -> HealthResponse:
     return HealthResponse(status="ok", model_loaded=predictor.model_loaded)
 
@@ -125,7 +125,7 @@ def health() -> HealthResponse:
     "/analyze",
     response_model=AnalyzeByTitleResponse,
     summary="영화 제목으로 평점 예측 + 추천 통합",
-    tags=["Movie Analysis"],
+    tags=["Movie"],
 )
 def analyze_by_title(payload: AnalyzeRequest) -> AnalyzeByTitleResponse:
     try:

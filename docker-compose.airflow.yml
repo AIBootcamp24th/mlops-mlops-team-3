@@ -16,6 +16,9 @@ services:
     depends_on:
       airflow-postgres:
         condition: service_started
+    env_file:
+      - .env
+      - .env.secrets
     environment: &airflow-common-env
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@airflow-postgres/airflow
@@ -23,11 +26,8 @@ services:
       AIRFLOW__API__AUTH_BACKENDS: airflow.api.auth.backend.basic_auth
       _PIP_ADDITIONAL_REQUIREMENTS: "boto3>=1.37.0 pydantic-settings>=2.7.0 wandb>=0.19.0"
       AWS_REGION: ${AWS_REGION:-}
-      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
-      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
       TRAIN_QUEUE_URL: ${TRAIN_QUEUE_URL:-}
       INFER_QUEUE_URL: ${INFER_QUEUE_URL:-}
-      WANDB_API_KEY: ${WANDB_API_KEY:-}
       WANDB_PROJECT: ${WANDB_PROJECT:-tmdb-rating-mlops}
       WANDB_ENTITY: ${WANDB_ENTITY:-}
       QUALITY_GATE_VAL_RMSE_MAX: ${QUALITY_GATE_VAL_RMSE_MAX:-1.2}
@@ -55,6 +55,9 @@ services:
     depends_on:
       airflow-init:
         condition: service_completed_successfully
+    env_file:
+      - .env
+      - .env.secrets
     environment: *airflow-common-env
     volumes: *airflow-common-volumes
     command: webserver
@@ -68,6 +71,9 @@ services:
     depends_on:
       airflow-init:
         condition: service_completed_successfully
+    env_file:
+      - .env
+      - .env.secrets
     environment: *airflow-common-env
     volumes: *airflow-common-volumes
     command: scheduler

@@ -191,6 +191,7 @@ celerybeat.pid
 
 # Environments
 .env
+.env.secrets
 remote.env
 
 # 원격 서버 연결 정보 (보안)
