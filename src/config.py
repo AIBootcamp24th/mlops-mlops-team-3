@@ -1,24 +1,12 @@
-from pydantic import Field
-from pydantic_settings import BaseSettings, SettingsConfigDict
+import os
 
+TOTAL_PAGES = 250
 
-class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+RAW_DATA_PATH = os.path.join(BASE_DIR, "src/data/raw/movies.csv")
+RESULT_DIR = os.path.join(BASE_DIR, "src/data/result")
 
-    aws_region: str = Field(default="ap-northeast-2", alias="AWS_REGION")
-    aws_access_key_id: str = Field(default="", alias="AWS_ACCESS_KEY_ID")
-    aws_secret_access_key: str = Field(default="", alias="AWS_SECRET_ACCESS_KEY")
-    aws_s3_raw_bucket: str = Field(default="", alias="AWS_S3_RAW_BUCKET")
-    aws_s3_model_bucket: str = Field(default="", alias="AWS_S3_MODEL_BUCKET")
-    aws_s3_pred_bucket: str = Field(default="", alias="AWS_S3_PRED_BUCKET")
-    train_queue_url: str = Field(default="", alias="TRAIN_QUEUE_URL")
-
-    wandb_api_key: str = Field(default="", alias="WANDB_API_KEY")
-    wandb_project: str = Field(default="tmdb-rating-mlops", alias="WANDB_PROJECT")
-    wandb_entity: str = Field(default="", alias="WANDB_ENTITY")
-
-    slack_bot_token: str = Field(default="", alias="SLACK_BOT_TOKEN")
-    slack_channel_id: str = Field(default="", alias="SLACK_CHANNEL_ID")
-
-
-settings = Settings()
+INPUT_DIM = 4
+EPOCHS = 300
+LR = 0.001
+BATCH_SIZE = 32
