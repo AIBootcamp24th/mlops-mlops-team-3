@@ -2,8 +2,9 @@
 # Edit at https://www.toptal.com/developers/gitignore?templates=windows,macos,linux,python,jupyternotebooks,vim,visualstudiocode
 
 wandb/
-data/raw/*.csv
-data/processed/*.csv
+/src/data/raw/*.csv
+/src/data/result/*.csv
+
 
 ### JupyterNotebooks ###
 # gitignore template for Jupyter Notebooks

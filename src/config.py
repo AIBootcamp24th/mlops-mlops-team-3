@@ -1,3 +1,5 @@
+import os
+
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -36,3 +38,13 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+# Korean-only 학습/추론 파이프라인에서 사용하는 로컬 경로 및 학습 하이퍼파라미터
+TOTAL_PAGES = 250
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+RAW_DATA_PATH = os.path.join(BASE_DIR, "src/data/raw/movies.csv")
+RESULT_DIR = os.path.join(BASE_DIR, "src/data/result")
+
+EPOCHS = 300
+LR = 0.001
+BATCH_SIZE = 32
