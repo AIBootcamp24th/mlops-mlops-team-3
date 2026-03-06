@@ -44,7 +44,7 @@ with DAG(
     dag_id="mlops_train_pipeline",
     default_args={"owner": "mlops-team3"},
     start_date=datetime(2026, 2, 27),
-    end_date=datetime(2026, 3, 11, 23, 59, 59),
+    end_date=datetime(2026, 3, 15, 23, 59, 59),
     schedule="0 2 * * *",
     catchup=False,
     tags=["mlops", "train", "sqs", "wandb"],

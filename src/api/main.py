@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 
 import requests
@@ -7,6 +8,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 
 from src.api.schemas import (
+    AnalyzeByIdRequest,
     AnalyzeByTitleResponse,
     AnalyzeRequest,
     HealthResponse,
@@ -99,10 +101,18 @@ def _resolve_movie_by_title(title: str) -> dict:
     return tmdb_client.movie_detail(int(searched["id"]))
 
 
+def _resolve_movie_by_id(movie_id: int) -> dict:
+    return tmdb_client.movie_detail(movie_id)
+
+
 def _build_user_history(items: list[UserHistoryItem]) -> list[RatedMovie]:
     history: list[RatedMovie] = []
+    resolved_by_title: dict[str, dict] = {}
     for item in items:
-        movie = _resolve_movie_by_title(item.title)
+        movie = resolved_by_title.get(item.title)
+        if movie is None:
+            movie = _resolve_movie_by_title(item.title)
+            resolved_by_title[item.title] = movie
         history.append(
             RatedMovie(
                 title=str(movie.get("title") or item.title),
@@ -130,15 +140,61 @@ def health() -> HealthResponse:
 def analyze_by_title(payload: AnalyzeRequest) -> AnalyzeByTitleResponse:
     try:
         base_movie = _resolve_movie_by_title(payload.title)
-        recommended = tmdb_client.recommendations(int(base_movie["id"]), max_items=max(10, payload.top_k * 3))
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except requests.RequestException as exc:
+        raise HTTPException(status_code=502, detail=f"TMDB 요청 실패: {exc}") from exc
+
+    return _analyze_with_base_movie(
+        base_movie=base_movie,
+        query_value=payload.title,
+        top_k=payload.top_k,
+        user_history_items=payload.user_history,
+    )
+
+
+@app.post(
+    "/analyze/id",
+    response_model=AnalyzeByTitleResponse,
+    summary="영화 ID로 평점 예측 + 추천 통합",
+    tags=["Movie"],
+)
+def analyze_by_id(payload: AnalyzeByIdRequest) -> AnalyzeByTitleResponse:
+    try:
+        base_movie = _resolve_movie_by_id(payload.movie_id)
+    except requests.HTTPError as exc:
+        status_code = exc.response.status_code if exc.response is not None else 502
+        if status_code == 404:
+            raise HTTPException(status_code=404, detail="해당 movie_id를 찾을 수 없습니다.") from exc
+        raise HTTPException(status_code=502, detail=f"TMDB 요청 실패: {exc}") from exc
+    except requests.RequestException as exc:
+        raise HTTPException(status_code=502, detail=f"TMDB 요청 실패: {exc}") from exc
+
+    return _analyze_with_base_movie(
+        base_movie=base_movie,
+        query_value=str(payload.movie_id),
+        top_k=payload.top_k,
+        user_history_items=payload.user_history,
+    )
+
+
+def _analyze_with_base_movie(
+    *,
+    base_movie: dict,
+    query_value: str,
+    top_k: int,
+    user_history_items: list[UserHistoryItem],
+) -> AnalyzeByTitleResponse:
+    try:
+        recommended = tmdb_client.recommendations(int(base_movie["id"]), max_items=max(10, top_k * 3))
         if not recommended:
             genre_ids = [int(genre["id"]) for genre in base_movie.get("genres", []) if "id" in genre]
             recommended = tmdb_client.discover_korean_by_genres(
                 genre_ids=genre_ids,
                 exclude_movie_id=int(base_movie["id"]),
-                max_items=max(10, payload.top_k * 3),
+                max_items=max(10, top_k * 3),
             )
-        user_history = _build_user_history(payload.user_history)
+        user_history = _build_user_history(user_history_items)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except requests.RequestException as exc:
@@ -146,8 +202,15 @@ def analyze_by_title(payload: AnalyzeRequest) -> AnalyzeByTitleResponse:
 
     preference = build_preference_vector(user_history) if user_history else None
     scored_candidates: list[RecommendationItem] = []
-    for item in recommended:
-        detail = tmdb_client.movie_detail(int(item["id"]))
+    recommended_ids = [int(item["id"]) for item in recommended]
+    detail_by_id: dict[int, dict] = {}
+    with ThreadPoolExecutor(max_workers=min(6, max(1, len(recommended_ids)))) as executor:
+        details = executor.map(tmdb_client.movie_detail, recommended_ids)
+        for detail in details:
+            detail_by_id[int(detail["id"])] = detail
+
+    for movie_id in recommended_ids:
+        detail = detail_by_id[movie_id]
         candidate = CandidateMovie(
             movie_id=int(detail["id"]),
             title=str(detail.get("title") or ""),
@@ -174,9 +237,9 @@ def analyze_by_title(payload: AnalyzeRequest) -> AnalyzeByTitleResponse:
             )
         )
 
-    ranked = sorted(scored_candidates, key=lambda item: item.final_score, reverse=True)[: payload.top_k]
+    ranked = sorted(scored_candidates, key=lambda item: item.final_score, reverse=True)[:top_k]
     return AnalyzeByTitleResponse(
-        query_title=payload.title,
+        query_title=query_value,
         movie=_to_movie_score(base_movie),
         recommendations=ranked,
     )

@@ -17,6 +17,12 @@ class AnalyzeRequest(MovieTitleRequest):
     user_history: list[UserHistoryItem] = Field(default_factory=list)
 
 
+class AnalyzeByIdRequest(BaseModel):
+    movie_id: int = Field(..., ge=1, examples=[550])
+    top_k: int = Field(default=5, ge=1, le=10)
+    user_history: list[UserHistoryItem] = Field(default_factory=list)
+
+
 class MovieScore(BaseModel):
     movie_id: int
     title: str

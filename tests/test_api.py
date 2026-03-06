@@ -99,3 +99,51 @@ def test_analyze_model_not_loaded(monkeypatch) -> None:
 
     response = client.post("/analyze", json={"title": "기생충", "top_k": 1})
     assert response.status_code == 503
+
+
+def test_analyze_by_id(monkeypatch) -> None:
+    monkeypatch.setattr(tmdb_client, "search_movie", lambda _: {"id": 4})
+    monkeypatch.setattr(
+        tmdb_client,
+        "movie_detail",
+        lambda movie_id: _movie_detail(
+            movie_id,
+            (
+                "기생충"
+                if movie_id == 1
+                else ("추천영화A" if movie_id == 2 else ("추천영화B" if movie_id == 3 else "살인의 추억"))
+            ),
+        ),
+    )
+    monkeypatch.setattr(
+        tmdb_client, "recommendations", lambda _movie_id, max_items: [{"id": 2}, {"id": 3}]
+    )
+    monkeypatch.setattr(
+        predictor,
+        "predict_one",
+        lambda features: 8.8 if features[2] > 9 else 6.2,
+    )
+
+    response = client.post(
+        "/analyze/id",
+        json={"movie_id": 1, "top_k": 2, "user_history": [{"title": "살인의 추억", "rating": 9.3}]},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["query_title"] == "1"
+    assert body["movie"]["movie_id"] == 1
+    assert len(body["recommendations"]) == 2
+
+
+def test_analyze_by_id_not_found(monkeypatch) -> None:
+    import requests
+
+    def _raise_not_found(_movie_id: int):
+        response = requests.Response()
+        response.status_code = 404
+        raise requests.HTTPError("Not Found", response=response)
+
+    monkeypatch.setattr(tmdb_client, "movie_detail", _raise_not_found)
+
+    response = client.post("/analyze/id", json={"movie_id": 999999, "top_k": 1})
+    assert response.status_code == 404

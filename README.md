@@ -8,6 +8,7 @@
 - 코드 수정 가능 기간: 2026-02-27 ~ 2026-03-11 (의논 후 결정)
 - 코드 프리즈: 2026-03-12(의논 후 결정)
 - 최종 발표일: 2026-03-13
+- 최대 작동일: 2026-03-15
 - 기술스택: Python, uv, PyTorch, AWS S3, AWS SQS, W&B, GitHub Actions, Slack Bot, Docker, Airflow
 
 ## 2. Team Members
@@ -90,18 +91,23 @@ cp .env.example .env
 - `ec2-scheduled-control.yml`: 평일 매시 실행으로 `config/ec2_schedule_targets.csv`의 role별 시작/중지 시간 정책 자동 적용
 - `ec2-queue-autoscale.yml`: SQS backlog 기반 `role=train|infer` 워커 자동 시작/중지
 - `ec2-anomaly-cost-alert.yml`: 10분 단위 이상 징후(고CPU/디스크 부족 위험/헬스체크 실패) 탐지 + 24시간 평균 CPU/Network/Disk 기준 저사용 후보 알림
-- 스케줄 기반 워크플로우는 `2026-02-27` ~ `2026-03-11` 기간에서만 실행되도록 기간 가드 적용
+- 스케줄 기반 워크플로우는 `2026-02-27` ~ `2026-03-15` 기간에서만 실행되도록 기간 가드 적용
+- 비용 상한(3/15 누적 10만원) 운영을 위해 Repository Variables 기본값:
+  - `TRAIN_QUEUE_SCALE_OUT_THRESHOLD=2`
+  - `INFER_QUEUE_SCALE_OUT_THRESHOLD=5`
+  - `QUEUE_SCALE_IN_IDLE_MINUTES=10`
+  - `QUEUE_IDLE_CPU_THRESHOLD=2`
 
 ## 8. Airflow 오케스트레이션
 
 - DAG 1: `airflow/dags/mlops_train_pipeline.py`
   - `validate_env` -> `dispatch_train_message` -> `quality_gate_candidate`
   - 스케줄: 매일 UTC `02:00` (`0 2 * * *`)
-  - 실행 기간: `2026-02-27` ~ `2026-03-11` (`start_date`/`end_date` 고정)
+  - 실행 기간: `2026-02-27` ~ `2026-03-15` (`start_date`/`end_date` 고정)
 - DAG 2: `airflow/dags/mlops_infer_pipeline.py`
   - `validate_env` -> `dispatch_infer_message`
   - 스케줄: 매일 UTC `02:30` (`30 2 * * *`)
-  - 실행 기간: `2026-02-27` ~ `2026-03-11` (`start_date`/`end_date` 고정)
+  - 실행 기간: `2026-02-27` ~ `2026-03-15` (`start_date`/`end_date` 고정)
 - DAG 3: `airflow/dags/mlops_train_then_infer_pipeline.py`
   - 수동 1회 트리거로 `학습 DAG` 완료 후 `추론 DAG`를 순차 실행
   - 내부 순서: `trigger_train_pipeline` -> `trigger_infer_pipeline`
@@ -137,6 +143,7 @@ uv run uvicorn src.api.main:app --host 0.0.0.0 --port 8000
 
 - `GET /health` - 헬스체크
 - `POST /analyze` - 영화 제목 기준 평점 + 추천 통합 응답
+- `POST /analyze/id` - 영화 TMDB ID 기준 평점 + 추천 통합 응답
 
 - 영화 미검색: `404` (`영화 검색 결과가 없습니다.`)
 - 모델 미로드: `503` (`모델 파일을 찾을 수 없습니다...`)
