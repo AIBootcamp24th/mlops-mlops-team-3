@@ -63,10 +63,10 @@ graph LR
 - scale-out: backlog가 임계치 이상이면 stopped 워커를 start
 - scale-in: backlog가 0이고 최근 N분 CPU가 임계치 이하이면 stop
 - 기본 임계치(Repository Variables)
-  - `TRAIN_QUEUE_SCALE_OUT_THRESHOLD` (기본 1)
-  - `INFER_QUEUE_SCALE_OUT_THRESHOLD` (기본 1)
-  - `QUEUE_SCALE_IN_IDLE_MINUTES` (기본 20)
-  - `QUEUE_IDLE_CPU_THRESHOLD` (기본 3)
+  - `TRAIN_QUEUE_SCALE_OUT_THRESHOLD` (기본 2)
+  - `INFER_QUEUE_SCALE_OUT_THRESHOLD` (기본 5)
+  - `QUEUE_SCALE_IN_IDLE_MINUTES` (기본 10)
+  - `QUEUE_IDLE_CPU_THRESHOLD` (기본 2)
 
 ## 8) Spot 전환 및 중단 대응 전략
 

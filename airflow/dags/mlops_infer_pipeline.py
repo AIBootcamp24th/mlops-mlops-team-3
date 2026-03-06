@@ -44,7 +44,7 @@ with DAG(
     dag_id="mlops_infer_pipeline",
     default_args={"owner": "mlops-team3"},
     start_date=datetime(2026, 2, 27),
-    end_date=datetime(2026, 3, 11, 23, 59, 59),
+    end_date=datetime(2026, 3, 15, 23, 59, 59),
     schedule="30 2 * * *",
     catchup=False,
     tags=["mlops", "infer", "sqs", "batch"],

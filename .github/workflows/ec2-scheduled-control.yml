@@ -32,7 +32,7 @@ jobs:
           fi
 
           today_kst="$(TZ=Asia/Seoul date +%Y-%m-%d)"
-          if [[ "$today_kst" < "2026-02-27" || "$today_kst" > "2026-03-11" ]]; then
+          if [[ "$today_kst" < "2026-02-27" || "$today_kst" > "2026-03-15" ]]; then
             echo "in_window=false" >> "$GITHUB_OUTPUT"
           else
             echo "in_window=true" >> "$GITHUB_OUTPUT"
