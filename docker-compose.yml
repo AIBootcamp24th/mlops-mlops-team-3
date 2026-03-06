@@ -6,6 +6,7 @@ services:
     container_name: mlops-trainer-worker
     env_file:
       - .env
+      - .env.secrets
     command: ["uv", "run", "python", "-m", "src.train.run_train"]
     restart: unless-stopped
 
@@ -16,6 +17,7 @@ services:
     container_name: mlops-infer-worker
     env_file:
       - .env
+      - .env.secrets
     command: ["uv", "run", "python", "-m", "src.infer.run_infer_worker"]
     restart: unless-stopped
 
@@ -26,6 +28,7 @@ services:
     container_name: mlops-api
     env_file:
       - .env
+      - .env.secrets
     command: ["uv", "run", "uvicorn", "src.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
     ports:
       - "8000:8000"

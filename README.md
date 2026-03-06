@@ -30,20 +30,6 @@
 
 <!-- contribution-table:end -->
 
-
-### 기여도 (main 브랜치 커밋 기준)
-
-`main` 브랜치의 `git shortlog -sne main` 결과를 기준으로, `shields.io` 배지로 자동 렌더링합니다.
-<!-- contribution-table:start -->
-| 팀원 (이름 + GitHub) | 기여도 |
-| --- | ---: |
-| [송민성 (@alstjd0051)](https://github.com/alstjd0051) | ![contribution](https://img.shields.io/badge/contribution-54.41%25-2ea043?style=for-the-badge&logo=github) |
-| [유준우 (팀장) (@joonwoo-yoo)](https://github.com/joonwoo-yoo) | ![contribution](https://img.shields.io/badge/contribution-45.59%25-1f6feb?style=for-the-badge&logo=github) |
-| [문성호 (@Eclipse-Universe)](https://github.com/Eclipse-Universe) | ![contribution](https://img.shields.io/badge/contribution-0.00%25-9e9e9e?style=for-the-badge&logo=github) |
-| [송용단 (@totalintelli)](https://github.com/totalintelli) | ![contribution](https://img.shields.io/badge/contribution-0.00%25-9e9e9e?style=for-the-badge&logo=github) |
-| [이재석 (@wotjrzm)](https://github.com/wotjrzm) | ![contribution](https://img.shields.io/badge/contribution-0.00%25-9e9e9e?style=for-the-badge&logo=github) |
-<!-- contribution-table:end -->
-
 ## 3. 업무 분담
 
 ### MLOps
@@ -116,6 +102,21 @@ cp .env.example .env
   - `validate_env` -> `dispatch_infer_message`
   - 스케줄: 매일 UTC `02:30` (`30 2 * * *`)
   - 실행 기간: `2026-02-27` ~ `2026-03-11` (`start_date`/`end_date` 고정)
+- DAG 3: `airflow/dags/mlops_train_then_infer_pipeline.py`
+  - 수동 1회 트리거로 `학습 DAG` 완료 후 `추론 DAG`를 순차 실행
+  - 내부 순서: `trigger_train_pipeline` -> `trigger_infer_pipeline`
+- DAG 4: `airflow/dags/mlops_datasets_observer.py`
+  - Dataset 이벤트 기반 관찰용 DAG
+- 원클릭 순차 실행 흐름:
+
+```mermaid
+graph LR
+  A[Manual Trigger<br/>mlops_train_then_infer_pipeline] --> B[Trigger Train DAG]
+  B --> C[mlops_train_pipeline Success]
+  C --> D[Trigger Infer DAG]
+  D --> E[mlops_infer_pipeline Success]
+```
+
 - 역할: Airflow가 SQS 학습/배치추론 트리거를 오케스트레이션
 - 학습 메시지 전략: `scripts/send_sqs_message.py`가 W&B의 최근 성능 기준으로 best profile 1건을 선택해 SQS에 전송 (조회 실패 시 baseline 폴백)
 - 품질 게이트 정책: Airflow DAG의 `quality_gate_candidate`는 기본적으로 비차단 모드(`QUALITY_GATE_REQUIRED=false`)로 경고만 기록하고 DAG는 성공 처리
