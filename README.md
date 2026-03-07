@@ -232,16 +232,19 @@ uv run python -m src.train.run_train
 - TMDB 한국 영화 원천 데이터 적재 및 예측 로그 관리를 위해 Docker 기반의 MySQL을 사용
 
 ### 1) 주요 설정
+
 - **Engine**: MySQL 8.4 LTS
 - **Character Set**: `utf8mb4` (한글 및 이모지 지원)
 - **Timezone**: `Asia/Seoul`
 - **Initial Schema**: `database/scripts/01_schema.sql` (컨테이너 실행 시 자동 로드)
 
 ### 2) 데이터베이스 스키마 구조
+
 - `movies_raw`: TMDB API에서 수집한 한국 영화(`ko`) 원천 데이터
 - `prediction_logs`: 모델 버전별 영화 평점 예측 이력 관리
 
 ### 3) 환경 변수 설정 (Local 실행 시 필수)
+
 프로젝트 루트에 아래 두 파일이 있어야 DB 컨테이너가 정상 작동
 - `.env`: `DB_NAME`, `DB_ROOT_PASSWORD`, `DB_USER`, `DB_PASSWORD`, `DB_HOST`, `DB_PORT` 설정
 - DB_NAME=movie_prediction_db
@@ -253,6 +256,7 @@ uv run python -m src.train.run_train
 - DB_PORT=3306
 
 ### 4) 실행 및 검증 (Common Docker Environment)
+
 ```bash
 # DB 서비스 실행
 docker compose up -d db
@@ -265,16 +269,19 @@ docker logs -f movie_prediction_db
 ```
 
 ### 5) Data Ingestion (Crawler)
+
 - **Source**: TMDB API (`discover/movie`)
 - **Filter**: `region=KR`, `original_language=ko`
 - **Logic**: 수집된 데이터는 `ON DUPLICATE KEY UPDATE` 방식을 통해 중복 없이 최신 상태로 유지
 - **Trigger**: 현재 DB 건수가 목표치(`MAX_PAGE` × 20)에 단 1개라도 미달할 경우 즉시 수집기 가동 (`Strict Data Integrity`)
 
 ### 6) 모델 학습 (Main Pipeline)
+
 - 데이터 소스를 로컬 CSV에서 **MySQL DB**로 전환
 - 실행 시 DB 데이터를 우선 조회하며, 데이터가 없을 경우에만 자동 수집 진행
 
 ### 7) Database Schema (`movies_raw` table)
+
 | Column | Type | Description |
 | :--- | :--- | :--- |
 | `tmdb_id` | INT (PK) | TMDB 고유 ID (학습 시 `id`로 매핑) |
@@ -287,6 +294,7 @@ docker logs -f movie_prediction_db
 | `genres` | JSON | 장르 ID 리스트 |
 
 ### 8) MySQL DB 확인용 (현재 약 5,000개의 영화정보 저장)
+
 ```bash
 # 프롬프트 창 입력
 docker exec -it movie_prediction_db mysql -u [각자 설정한 DB_USER] -p movie_prediction_db -e "SELECT COUNT(*) AS total_movies FROM movies_raw;"
