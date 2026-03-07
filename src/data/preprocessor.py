@@ -75,4 +75,4 @@ class DataPreprocessor:
         scaler_path = os.path.join(dst_dir, "scaler.joblib")
         joblib.dump(self.scaler, scaler_path)
 
-        print(f"[Config 적용] 데이터 및 스케일러 저장 완료: {dst_dir}")
+        print(f"- 스케일러 적용된 데이터 저장 완료: {dst_dir}")
