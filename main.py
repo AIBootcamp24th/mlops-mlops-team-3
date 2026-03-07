@@ -35,7 +35,7 @@ def main():
 
     is_data_insufficient = (
         current_count < target_min_count
-    )  # DB 갱신 조건: 목표 수량 미달 시 데이터 보충 및 기존 항목 업데이트 (80% 미만일 때 추가 수집 실행)
+    )  # DB 갱신 조건: 목표 수량 미달 시 데이터 보충 및 기존 항목 업데이트 (1개라도 부족하면 수집 시작)
 
     if df_raw.empty or is_data_insufficient or force_update:
         print(
