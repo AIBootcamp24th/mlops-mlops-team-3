@@ -33,3 +33,28 @@ services:
     ports:
       - "8000:8000"
     restart: unless-stopped
+
+  db:
+      image: mysql:8.4
+      container_name: movie_prediction_db
+      restart: unless-stopped
+      platform: linux/amd64
+      env_file:
+        - .env
+      environment:
+        MYSQL_DATABASE: ${DB_NAME}
+        MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
+        MYSQL_USER: ${DB_USER}
+        MYSQL_PASSWORD: ${DB_PASSWORD}
+        TZ: Asia/Seoul
+      ports:
+        - "3306:3306"
+      volumes:
+        - mysql_data:/var/lib/mysql
+        - ./database/scripts:/docker-entrypoint-initdb.d
+      command:
+        - --character-set-server=utf8mb4
+        - --collation-server=utf8mb4_unicode_ci
+
+volumes:
+  mysql_data:

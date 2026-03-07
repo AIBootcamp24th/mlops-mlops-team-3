@@ -32,7 +32,9 @@ class Settings(BaseSettings):
     api_model_registry_key: str = Field(
         default="models/registry/champion.json", alias="API_MODEL_REGISTRY_KEY"
     )
-    api_model_local_path: str = Field(default="artifacts/rating_model.pt", alias="API_MODEL_LOCAL_PATH")
+    api_model_local_path: str = Field(
+        default="artifacts/rating_model.pt", alias="API_MODEL_LOCAL_PATH"
+    )
     tmdb_api_key: str = Field(default="", alias="TMDB_API_KEY")
     tmdb_language: str = Field(default="ko-KR", alias="TMDB_LANGUAGE")
 
@@ -40,7 +42,7 @@ class Settings(BaseSettings):
 settings = Settings()
 
 # Korean-only 학습/추론 파이프라인에서 사용하는 로컬 경로 및 학습 하이퍼파라미터
-TOTAL_PAGES = 250
+MAX_PAGE = 10
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 RAW_DATA_PATH = os.path.join(BASE_DIR, "src/data/raw/movies.csv")
 RESULT_DIR = os.path.join(BASE_DIR, "src/data/result")
@@ -48,3 +50,4 @@ RESULT_DIR = os.path.join(BASE_DIR, "src/data/result")
 EPOCHS = 300
 LR = 0.001
 BATCH_SIZE = 32
+SQL = "MySQL"
