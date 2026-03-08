@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: write
+  pull-requests: write
 
 jobs:
   update-contribution:
@@ -25,15 +26,31 @@ jobs:
       - name: Update contribution table
         run: python scripts/update_contribution_badges.py
 
-      - name: Commit and push if changed
+      - name: Check README changes
+        id: readme-changes
         run: |
           if git diff --quiet -- README.md; then
             echo "README 변경사항 없음"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
+          echo "changed=true" >> "$GITHUB_OUTPUT"
 
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add README.md
-          git commit -m "문서: main 브랜치 기준 기여도 자동 갱신"
-          git push
+      - name: Create pull request for README update
+        if: steps.readme-changes.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@v7
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: "문서: main 브랜치 기준 기여도 자동 갱신"
+          title: "문서: 기여도 표 자동 갱신"
+          body: |
+            GitHub Actions가 README 기여도 표를 자동으로 갱신했습니다.
+            Ruleset(직접 push 제한)을 준수하기 위해 PR 방식으로 반영합니다.
+          branch: "bot/update-contribution-readme"
+          delete-branch: true
+          add-paths: |
+            README.md
+          labels: |
+            documentation
+            automated
+
