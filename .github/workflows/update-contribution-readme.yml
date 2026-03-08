@@ -7,7 +7,6 @@ on:
 
 permissions:
   contents: write
-  pull-requests: write
 
 jobs:
   update-contribution:
@@ -36,21 +35,16 @@ jobs:
           fi
           echo "changed=true" >> "$GITHUB_OUTPUT"
 
-      - name: Create pull request for README update
+      - name: Commit and push README update branch
         if: steps.readme-changes.outputs.changed == 'true'
-        uses: peter-evans/create-pull-request@v7
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          commit-message: "문서: main 브랜치 기준 기여도 자동 갱신"
-          title: "문서: 기여도 표 자동 갱신"
-          body: |
-            GitHub Actions가 README 기여도 표를 자동으로 갱신했습니다.
-            Ruleset(직접 push 제한)을 준수하기 위해 PR 방식으로 반영합니다.
-          branch: "bot/update-contribution-readme"
-          delete-branch: true
-          add-paths: |
-            README.md
-          labels: |
-            documentation
-            automated
+        run: |
+          BRANCH="bot/update-contribution-readme"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B "$BRANCH"
+          git add README.md
+          git commit -m "문서: main 브랜치 기준 기여도 자동 갱신"
+          git push -f origin "$BRANCH"
+          echo "브랜치 푸시 완료: $BRANCH"
+          echo "수동 PR 생성: https://github.com/${{ github.repository }}/pull/new/$BRANCH"
 
