@@ -236,8 +236,24 @@ jobs:
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
+      - name: Check KST Slack notification window
+        if: ${{ always() && steps.period_guard.outputs.in_window == 'true' }}
+        id: notify_guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          day_kst="$(TZ=Asia/Seoul date +%u)"
+          hour_kst="$(TZ=Asia/Seoul date +%H)"
+          hour_kst=$((10#$hour_kst))
+
+          if [ "$day_kst" -ge 1 ] && [ "$day_kst" -le 5 ] && [ "$hour_kst" -ge 9 ] && [ "$hour_kst" -le 23 ]; then
+            echo "notify_window=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "notify_window=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Send Slack success notification
-        if: ${{ success() && steps.period_guard.outputs.in_window == 'true' }}
+        if: ${{ success() && steps.period_guard.outputs.in_window == 'true' && steps.notify_guard.outputs.notify_window == 'true' }}
         env:
           SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
           SLACK_CHANNEL_ID: ${{ secrets.SLACK_CHANNEL_ID }}
@@ -270,7 +286,7 @@ jobs:
             --data "${payload}"
 
       - name: Send Slack failure notification
-        if: ${{ failure() && steps.period_guard.outputs.in_window == 'true' }}
+        if: ${{ failure() && steps.period_guard.outputs.in_window == 'true' && steps.notify_guard.outputs.notify_window == 'true' }}
         env:
           SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
           SLACK_CHANNEL_ID: ${{ secrets.SLACK_CHANNEL_ID }}
