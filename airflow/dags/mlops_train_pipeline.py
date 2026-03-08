@@ -65,12 +65,23 @@ with DAG(
         ),
     )
 
+    run_train_once = BashOperator(
+        task_id="run_train_worker_once",
+        append_env=True,
+        env={"PYTHONPATH": "/opt/airflow/project"},
+        bash_command=(
+            "cd /opt/airflow/project && "
+            "python -m src.train.run_train"
+        ),
+    )
+
     quality_gate = BashOperator(
         task_id="quality_gate_candidate",
         append_env=True,
         env={
             "PYTHONPATH": "/opt/airflow/project",
             "QUALITY_GATE_REQUIRED": "false",
+            "QUALITY_GATE_MAX_RUNS": "50",
         },
         bash_command=(
             "cd /opt/airflow/project && "
@@ -78,4 +89,4 @@ with DAG(
         ),
     )
 
-    env_check >> dispatch_train >> quality_gate
+    env_check >> dispatch_train >> run_train_once >> quality_gate

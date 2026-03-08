@@ -42,10 +42,10 @@ services:
       env_file:
         - .env
       environment:
-        MYSQL_DATABASE: ${DB_NAME}
-        MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
-        MYSQL_USER: ${DB_USER}
-        MYSQL_PASSWORD: ${DB_PASSWORD}
+        MYSQL_DATABASE: ${MYSQL_DATABASE:-mlops}
+        MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-admin}
+        MYSQL_USER: ${MYSQL_USER:-mlops}
+        MYSQL_PASSWORD: ${MYSQL_PASSWORD:-mlops1234}
         TZ: Asia/Seoul
       ports:
         - "3306:3306"

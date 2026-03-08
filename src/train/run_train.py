@@ -89,7 +89,18 @@ def main() -> None:
             df = df[feature_cols + [target_col]].dropna()
             validate_training_frame(df, feature_cols, target_col)
 
-            train_df, val_df = train_test_split(df, test_size=0.2, random_state=seed)
+            # Guard tiny datasets from S3 (e.g., bootstrap/test uploads) so
+            # orchestration can still proceed without split/BatchNorm errors.
+            if len(df) < 3:
+                repeat = (3 + len(df) - 1) // max(1, len(df))
+                df = pd.concat([df] * repeat, ignore_index=True).head(3)
+                print("경고: 학습 데이터가 3건 미만이라 샘플을 복제해 최소 학습 조건을 맞췄습니다.")
+
+            sample_count = len(df)
+            test_size = max(1, int(round(sample_count * 0.2)))
+            if sample_count - test_size < 1:
+                test_size = sample_count - 1
+            train_df, val_df = train_test_split(df, test_size=test_size, random_state=seed)
             scaler = StandardScaler()
             train_df = train_df.copy()
             val_df = val_df.copy()

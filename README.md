@@ -14,8 +14,8 @@
 ## 2. Team Members
 
 - [유준우 (팀장)](https://github.com/joonwoo-yoo)
-- [문성호](https://github.com/Eclipse-Universe)
 - [송민성](https://github.com/alstjd0051)
+- ~~[문성호](https://github.com/Eclipse-Universe)~~
 - [송용단](https://github.com/totalintelli)
 - [이재석](https://github.com/wotjrzm)
 
@@ -43,7 +43,7 @@
 
 ### MLOps, AI 모델링 지원
 
-- 문성호 님
+- ~~문성호 님~~ => 참여 부진
 - 송용단 님
 - 송민성 님
 
@@ -101,9 +101,10 @@ cp .env.example .env
 ## 8. Airflow 오케스트레이션
 
 - DAG 1: `airflow/dags/mlops_train_pipeline.py`
-  - `validate_env` -> `dispatch_train_message` -> `quality_gate_candidate`
+  - `validate_env` -> `dispatch_train_message` -> `run_train_worker_once` -> `quality_gate_candidate`
   - 스케줄: 매일 UTC `02:00` (`0 2 * * *`)
   - 실행 기간: `2026-02-27` ~ `2026-03-15` (`start_date`/`end_date` 고정)
+  - 학습 워커가 별도 상시 실행되지 않아도 DAG 내부에서 1회 학습을 직접 수행
 - DAG 2: `airflow/dags/mlops_infer_pipeline.py`
   - `validate_env` -> `dispatch_infer_message`
   - 스케줄: 매일 UTC `02:30` (`30 2 * * *`)
@@ -236,7 +237,7 @@ uv run python -m src.train.run_train
 - **Engine**: MySQL 8.4 LTS
 - **Character Set**: `utf8mb4` (한글 및 이모지 지원)
 - **Timezone**: `Asia/Seoul`
-- **Initial Schema**: `database/scripts/01_schema.sql` (컨테이너 실행 시 자동 로드)
+- **Initial Schema**: `database/scripts/01_schema.sql`, `03_analyze_id_prediction_logs.sql` (컨테이너 실행 시 자동 로드)
 
 ### 2) 데이터베이스 스키마 구조
 
@@ -246,6 +247,7 @@ uv run python -m src.train.run_train
 ### 3) 환경 변수 설정 (Local 실행 시 필수)
 
 프로젝트 루트에 아래 두 파일이 있어야 DB 컨테이너가 정상 작동
+
 - `.env`: `DB_NAME`, `DB_ROOT_PASSWORD`, `DB_USER`, `DB_PASSWORD`, `DB_HOST`, `DB_PORT` 설정
 - DB_NAME=movie_prediction_db
 - DB_ROOT_PASSWORD=admin
@@ -282,16 +284,16 @@ docker logs -f movie_prediction_db
 
 ### 7) Database Schema (`movies_raw` table)
 
-| Column | Type | Description |
-| :--- | :--- | :--- |
-| `tmdb_id` | INT (PK) | TMDB 고유 ID (학습 시 `id`로 매핑) |
-| `title` | VARCHAR | 영화 제목 |
-| **`budget`** | INT | **[신규]** 영화 제작비 |
-| **`runtime`** | INT | **[신규]** 상영 시간 |
-| `popularity` | FLOAT | 인기도 |
-| `vote_average`| FLOAT | 실제 평점 (Target Variable) |
-| `vote_count` | INT | 투표 수 |
-| `genres` | JSON | 장르 ID 리스트 |
+| Column         | Type     | Description                        |
+| :------------- | :------- | :--------------------------------- |
+| `tmdb_id`      | INT (PK) | TMDB 고유 ID (학습 시 `id`로 매핑) |
+| `title`        | VARCHAR  | 영화 제목                          |
+| **`budget`**   | INT      | **[신규]** 영화 제작비             |
+| **`runtime`**  | INT      | **[신규]** 상영 시간               |
+| `popularity`   | FLOAT    | 인기도                             |
+| `vote_average` | FLOAT    | 실제 평점 (Target Variable)        |
+| `vote_count`   | INT      | 투표 수                            |
+| `genres`       | JSON     | 장르 ID 리스트                     |
 
 ### 8) MySQL DB 확인용 (현재 약 5,000개의 영화정보 저장)
 

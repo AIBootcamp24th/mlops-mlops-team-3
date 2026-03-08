@@ -38,6 +38,25 @@ class Settings(BaseSettings):
     tmdb_api_key: str = Field(default="", alias="TMDB_API_KEY")
     tmdb_language: str = Field(default="ko-KR", alias="TMDB_LANGUAGE")
 
+    # Legacy DB_* variables for local MySQL container/database module
+    db_user: str = Field(default="", alias="DB_USER")
+    db_password: str = Field(default="", alias="DB_PASSWORD")
+    db_host: str = Field(default="", alias="DB_HOST")
+    db_port: int = Field(default=3306, alias="DB_PORT")
+    db_name: str = Field(default="", alias="DB_NAME")
+
+    # MySQL logging variables used by /analyze/id async logger
+    mysql_host: str = Field(default="", alias="MYSQL_HOST")
+    mysql_port: int = Field(default=3306, alias="MYSQL_PORT")
+    mysql_user: str = Field(default="", alias="MYSQL_USER")
+    mysql_password: str = Field(default="", alias="MYSQL_PASSWORD")
+    mysql_database: str = Field(default="", alias="MYSQL_DATABASE")
+    mysql_analyze_id_table: str = Field(
+        default="analyze_id_prediction_logs",
+        alias="MYSQL_ANALYZE_ID_TABLE",
+    )
+    mysql_connect_timeout_seconds: int = Field(default=2, alias="MYSQL_CONNECT_TIMEOUT_SECONDS")
+
 
 settings = Settings()
 

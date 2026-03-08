@@ -93,11 +93,13 @@ class TMDBCollector:
         try:
             query = text("""
                 INSERT INTO movies_raw 
-                (tmdb_id, title, original_title, overview, release_date, vote_average, vote_count, popularity, original_language, genres)
+                (tmdb_id, title, original_title, overview, release_date, budget, runtime, vote_average, vote_count, popularity, original_language, genres)
                 VALUES 
-                (:id, :title, :original_title, :overview, :release_date, :vote_average, :vote_count, :popularity, :original_language, :genres)
+                (:id, :title, :original_title, :overview, :release_date, :budget, :runtime, :vote_average, :vote_count, :popularity, :original_language, :genres)
                 ON DUPLICATE KEY UPDATE
                 title = VALUES(title),
+                budget = VALUES(budget),
+                runtime = VALUES(runtime),
                 vote_average = VALUES(vote_average),
                 vote_count = VALUES(vote_count),
                 popularity = VALUES(popularity),

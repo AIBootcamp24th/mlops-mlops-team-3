@@ -10,13 +10,24 @@ env_path = os.path.join(project_root, ".env")
 
 load_dotenv(env_path)
 
-DB_USER = os.getenv("DB_USER")
-DB_PASSWORD = os.getenv("DB_PASSWORD")
-DB_HOST = os.getenv("DB_HOST")
-DB_PORT = os.getenv("DB_PORT")
-DB_NAME = os.getenv("DB_NAME")
+def _first_non_empty(*values: str | None, default: str = "") -> str:
+    for value in values:
+        if value is not None and value.strip():
+            return value.strip()
+    return default
 
-DATABASE_URL = f"mysql+pymysql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+
+DB_USER = _first_non_empty(os.getenv("DB_USER"), os.getenv("MYSQL_USER"), default="mlops")
+DB_PASSWORD = _first_non_empty(
+    os.getenv("DB_PASSWORD"),
+    os.getenv("MYSQL_PASSWORD"),
+    default="mlops1234",
+)
+DB_HOST = _first_non_empty(os.getenv("DB_HOST"), os.getenv("MYSQL_HOST"), default="localhost")
+DB_PORT = _first_non_empty(os.getenv("DB_PORT"), os.getenv("MYSQL_PORT"), default="3306")
+DB_NAME = _first_non_empty(os.getenv("DB_NAME"), os.getenv("MYSQL_DATABASE"), default="mlops")
+
+DATABASE_URL = f"mysql+pymysql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{int(DB_PORT)}/{DB_NAME}"
 
 engine = create_engine(
     DATABASE_URL,

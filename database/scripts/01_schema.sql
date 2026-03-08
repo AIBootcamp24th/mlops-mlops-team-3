@@ -4,6 +4,8 @@ CREATE TABLE IF NOT EXISTS movies_raw (
     original_title VARCHAR(255),
     overview TEXT,
     release_date DATE,
+    budget BIGINT DEFAULT 0,
+    runtime INT DEFAULT 0,
     vote_average FLOAT,
     vote_count INT,
     popularity FLOAT,
@@ -21,4 +23,4 @@ CREATE TABLE IF NOT EXISTS prediction_logs (
     model_version VARCHAR(50) NOT NULL,
     predicted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (tmdb_id) REFERENCES movies_raw(tmdb_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;i
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

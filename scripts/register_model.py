@@ -73,6 +73,7 @@ def _promote_wandb_champion_alias(api: wandb.Api, project: str, run_id: str) -> 
 
 def main() -> None:
     quality_gate_required = os.getenv("QUALITY_GATE_REQUIRED", "false").lower() == "true"
+    max_runs = int(os.getenv("QUALITY_GATE_MAX_RUNS", "100"))
 
     if settings.wandb_api_key:
         os.environ["WANDB_API_KEY"] = settings.wandb_api_key
@@ -84,7 +85,7 @@ def main() -> None:
 
     api = wandb.Api()
     project = _project_name()
-    runs = api.runs(project)
+    runs = api.runs(project, order="-created_at", per_page=min(max_runs, 200))
     if not runs:
         if quality_gate_required:
             raise RuntimeError("W&B run 이 존재하지 않습니다.")
@@ -93,7 +94,11 @@ def main() -> None:
 
     approved_run: wandb.apis.public.Run | None = None
     selected_metrics: tuple[float, float] | None = None
+    scanned = 0
     for run in runs:
+        scanned += 1
+        if scanned > max_runs:
+            break
         if run.state != "finished":
             continue
         if str(run.summary.get("status", "")) != "success":
@@ -105,6 +110,8 @@ def main() -> None:
         if selected_metrics is None or metrics < selected_metrics:
             approved_run = run
             selected_metrics = metrics
+
+    print(f"quality gate scanned runs: {scanned}")
 
     if approved_run is None or selected_metrics is None:
         message = (

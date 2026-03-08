@@ -24,8 +24,13 @@ services:
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@airflow-postgres/airflow
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
       AIRFLOW__API__AUTH_BACKENDS: airflow.api.auth.backend.basic_auth
-      _PIP_ADDITIONAL_REQUIREMENTS: "boto3>=1.37.0 pydantic-settings>=2.7.0 wandb>=0.19.0"
+      _PIP_ADDITIONAL_REQUIREMENTS: "boto3>=1.37.0 pydantic-settings>=2.7.0 wandb>=0.19.0 torch>=2.6.0 scikit-learn>=1.6.0"
       AWS_REGION: ${AWS_REGION:-}
+      AWS_DEFAULT_REGION: ${AWS_REGION:-}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}
+      AWS_PROFILE: ${AWS_PROFILE:-default}
       TRAIN_QUEUE_URL: ${TRAIN_QUEUE_URL:-}
       INFER_QUEUE_URL: ${INFER_QUEUE_URL:-}
       WANDB_PROJECT: ${WANDB_PROJECT:-tmdb-rating-mlops}
@@ -37,6 +42,7 @@ services:
       - ./airflow/dags:/opt/airflow/dags
       - ./airflow/logs:/opt/airflow/logs
       - ./:/opt/airflow/project
+      - ${HOME}/.aws:/home/airflow/.aws:ro
     command: >
       bash -c "
       airflow db migrate &&
