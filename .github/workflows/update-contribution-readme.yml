@@ -25,15 +25,26 @@ jobs:
       - name: Update contribution table
         run: python scripts/update_contribution_badges.py
 
-      - name: Commit and push if changed
+      - name: Check README changes
+        id: readme-changes
         run: |
           if git diff --quiet -- README.md; then
             echo "README 변경사항 없음"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
+          echo "changed=true" >> "$GITHUB_OUTPUT"
 
+      - name: Commit and push README update branch
+        if: steps.readme-changes.outputs.changed == 'true'
+        run: |
+          BRANCH="bot/update-contribution-readme"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B "$BRANCH"
           git add README.md
           git commit -m "문서: main 브랜치 기준 기여도 자동 갱신"
-          git push
+          git push -f origin "$BRANCH"
+          echo "브랜치 푸시 완료: $BRANCH"
+          echo "수동 PR 생성: https://github.com/${{ github.repository }}/pull/new/$BRANCH"
+
