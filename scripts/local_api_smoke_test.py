@@ -10,7 +10,7 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
-from src.api.main import app, predictor, tmdb_client
+from src.api.main import app, predictor, tmdb_client  # noqa: E402
 
 
 def _movie_detail(movie_id: int, title: str) -> dict:
