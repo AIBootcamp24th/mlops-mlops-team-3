@@ -38,14 +38,14 @@ class Settings(BaseSettings):
     tmdb_api_key: str = Field(default="", alias="TMDB_API_KEY")
     tmdb_language: str = Field(default="ko-KR", alias="TMDB_LANGUAGE")
 
-    # Legacy DB_* variables for local MySQL container/database module
+    # Database connection variables (unified priority: DB_* > MYSQL_* > defaults)
     db_user: str = Field(default="", alias="DB_USER")
     db_password: str = Field(default="", alias="DB_PASSWORD")
     db_host: str = Field(default="", alias="DB_HOST")
     db_port: int = Field(default=3306, alias="DB_PORT")
     db_name: str = Field(default="", alias="DB_NAME")
 
-    # MySQL logging variables used by /analyze/id async logger
+    # MySQL logging variables used by /analyze/id async logger (legacy support)
     mysql_host: str = Field(default="", alias="MYSQL_HOST")
     mysql_port: int = Field(default=3306, alias="MYSQL_PORT")
     mysql_user: str = Field(default="", alias="MYSQL_USER")
@@ -56,6 +56,26 @@ class Settings(BaseSettings):
         alias="MYSQL_ANALYZE_ID_TABLE",
     )
     mysql_connect_timeout_seconds: int = Field(default=2, alias="MYSQL_CONNECT_TIMEOUT_SECONDS")
+
+    def get_db_host(self) -> str:
+        """Get database host with priority: DB_HOST > MYSQL_HOST > localhost."""
+        return self.db_host or self.mysql_host or "localhost"
+
+    def get_db_port(self) -> int:
+        """Get database port with priority: DB_PORT > MYSQL_PORT > 3306."""
+        return self.db_port if self.db_port != 3306 or not self.mysql_port else self.mysql_port
+
+    def get_db_user(self) -> str:
+        """Get database user with priority: DB_USER > MYSQL_USER > mlops."""
+        return self.db_user or self.mysql_user or "mlops"
+
+    def get_db_password(self) -> str:
+        """Get database password with priority: DB_PASSWORD > MYSQL_PASSWORD > mlops1234."""
+        return self.db_password or self.mysql_password or "mlops1234"
+
+    def get_db_name(self) -> str:
+        """Get database name with priority: DB_NAME > MYSQL_DATABASE > mlops."""
+        return self.db_name or self.mysql_database or "mlops"
 
 
 settings = Settings()

@@ -4,28 +4,19 @@ from dotenv import load_dotenv
 from sqlalchemy import create_engine
 from sqlalchemy.orm import declarative_base, sessionmaker
 
+from src.config import settings
+
 current_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.abspath(os.path.join(current_dir, "../../"))
 env_path = os.path.join(project_root, ".env")
 
 load_dotenv(env_path)
 
-def _first_non_empty(*values: str | None, default: str = "") -> str:
-    for value in values:
-        if value is not None and value.strip():
-            return value.strip()
-    return default
-
-
-DB_USER = _first_non_empty(os.getenv("DB_USER"), os.getenv("MYSQL_USER"), default="mlops")
-DB_PASSWORD = _first_non_empty(
-    os.getenv("DB_PASSWORD"),
-    os.getenv("MYSQL_PASSWORD"),
-    default="mlops1234",
-)
-DB_HOST = _first_non_empty(os.getenv("DB_HOST"), os.getenv("MYSQL_HOST"), default="localhost")
-DB_PORT = _first_non_empty(os.getenv("DB_PORT"), os.getenv("MYSQL_PORT"), default="3306")
-DB_NAME = _first_non_empty(os.getenv("DB_NAME"), os.getenv("MYSQL_DATABASE"), default="mlops")
+DB_USER = settings.get_db_user()
+DB_PASSWORD = settings.get_db_password()
+DB_HOST = settings.get_db_host()
+DB_PORT = settings.get_db_port()
+DB_NAME = settings.get_db_name()
 
 DATABASE_URL = f"mysql+pymysql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{int(DB_PORT)}/{DB_NAME}"
 

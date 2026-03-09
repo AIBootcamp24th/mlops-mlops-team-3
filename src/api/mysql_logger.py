@@ -21,11 +21,11 @@ class MySQLAnalyzeByIdLogger:
     """/analyze/id 응답을 MySQL(RDS)에 비차단으로 저장한다."""
 
     def __init__(self) -> None:
-        self.host = (settings.mysql_host or settings.db_host or "localhost").strip()
-        self.port = settings.mysql_port or settings.db_port
-        self.user = (settings.mysql_user or settings.db_user or "mlops").strip()
-        self.password = (settings.mysql_password or settings.db_password or "mlops1234").strip()
-        self.database = (settings.mysql_database or settings.db_name or "mlops").strip()
+        self.host = settings.get_db_host().strip()
+        self.port = settings.get_db_port()
+        self.user = settings.get_db_user().strip()
+        self.password = settings.get_db_password().strip()
+        self.database = settings.get_db_name().strip()
         self.table_name = settings.mysql_analyze_id_table.strip()
         self.connect_timeout_seconds = settings.mysql_connect_timeout_seconds
         self._executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="mysql-log")

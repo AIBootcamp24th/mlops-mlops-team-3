@@ -54,6 +54,16 @@ with DAG(
         python_callable=validate_runtime_env,
     )
 
+    sync_tmdb_to_db = BashOperator(
+        task_id="sync_tmdb_to_db",
+        append_env=True,
+        env={"PYTHONPATH": "/opt/airflow/project"},
+        bash_command=(
+            "cd /opt/airflow/project && "
+            "python scripts/sync_tmdb_to_db.py"
+        ),
+    )
+
     dispatch_train = BashOperator(
         task_id="dispatch_train_message",
         append_env=True,
@@ -89,4 +99,4 @@ with DAG(
         ),
     )
 
-    env_check >> dispatch_train >> run_train_once >> quality_gate
+    env_check >> sync_tmdb_to_db >> dispatch_train >> run_train_once >> quality_gate

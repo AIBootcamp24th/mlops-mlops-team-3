@@ -35,9 +35,11 @@ tmdb_client = TMDBClient()
 async def lifespan(_: FastAPI):
     try:
         predictor.load()
-    except FileNotFoundError:
-        # 모델이 아직 준비되지 않은 환경에서도 API 자체는 기동 가능하게 둔다.
-        pass
+    except (FileNotFoundError, Exception) as exc:
+        # 모델이 아직 준비되지 않았거나 AWS 자격증명이 없는 환경에서도 API 자체는 기동 가능하게 둔다.
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.warning(f"모델 로딩 실패 (API는 계속 실행됩니다): {type(exc).__name__}: {exc}")
     yield
 
 
