@@ -1,4 +1,5 @@
 import os
+from urllib.parse import quote_plus
 
 from dotenv import load_dotenv
 from sqlalchemy import create_engine
@@ -18,7 +19,10 @@ DB_HOST = settings.get_db_host()
 DB_PORT = settings.get_db_port()
 DB_NAME = settings.get_db_name()
 
-DATABASE_URL = f"mysql+pymysql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{int(DB_PORT)}/{DB_NAME}"
+DATABASE_URL = (
+    f"mysql+pymysql://{quote_plus(DB_USER)}:{quote_plus(DB_PASSWORD)}@"
+    f"{DB_HOST}:{int(DB_PORT)}/{DB_NAME}"
+)
 
 engine = create_engine(
     DATABASE_URL,

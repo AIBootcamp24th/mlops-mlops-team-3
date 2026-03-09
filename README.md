@@ -256,6 +256,9 @@ uv run python -m src.train.run_train
 - DB_HOST=localhost **(로컬에서 실행시)**
 - DB_HOST=db **(컨테이너에서 실행시)**
 - DB_PORT=3306
+- DB_AUTO_FAILOVER=true
+- DB_FALLBACK_HOSTS=db,localhost,127.0.0.1,host.docker.internal
+- DB_PROBE_TIMEOUT_SECONDS=0.6
 
 ### 4) 실행 및 검증 (Common Docker Environment)
 
