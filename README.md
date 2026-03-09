@@ -9,7 +9,7 @@
 - 코드 프리즈: 2026-03-12(의논 후 결정)
 - 최종 발표일: 2026-03-13
 - 최대 작동일: 2026-03-15
-- 기술스택: Python, uv, PyTorch, AWS S3, AWS SQS, W&B, GitHub Actions, Slack Bot, Docker, Airflow
+- 기술스택: Python, uv, PyTorch, AWS S3, AWS SQS, W&B, GitHub Actions, Slack Bot, Docker, Airflow, Aurora and RDS
 
 ## 2. Team Members
 
