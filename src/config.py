@@ -39,7 +39,9 @@ class Settings(BaseSettings):
     tmdb_api_key: str = Field(default="", alias="TMDB_API_KEY")
     tmdb_language: str = Field(default="ko-KR", alias="TMDB_LANGUAGE")
 
-    # Database connection variables (unified priority: DB_* > MYSQL_* > defaults)
+    # Database connection variables (RDS/Aurora 우선 전략)
+    # 우선순위: DB_* (RDS/Aurora 엔드포인트) > MYSQL_* (레거시/로컬 MySQL) > 기본값
+    # 운영 환경에서는 Terraform output의 DB_HOST(예: RDS/Aurora 엔드포인트)를 사용
     db_user: str = Field(default="", alias="DB_USER")
     db_password: str = Field(default="", alias="DB_PASSWORD")
     db_host: str = Field(default="", alias="DB_HOST")
@@ -54,7 +56,8 @@ class Settings(BaseSettings):
     secondary_db_host: str = Field(default="", alias="SECONDARY_DB_HOST")
     secondary_db_port: int = Field(default=3306, alias="SECONDARY_DB_PORT")
 
-    # MySQL logging variables used by /analyze/id async logger (legacy support)
+    # MySQL 호환 변수 (레거시 지원 및 로컬 개발용 fallback)
+    # 운영 환경에서는 DB_* 변수를 우선 사용하고, 개발/테스트 환경에서만 MYSQL_* 사용
     mysql_host: str = Field(default="", alias="MYSQL_HOST")
     mysql_port: int = Field(default=3306, alias="MYSQL_PORT")
     mysql_user: str = Field(default="", alias="MYSQL_USER")
@@ -92,19 +95,19 @@ class Settings(BaseSettings):
         return candidates[0]
 
     def get_db_port(self) -> int:
-        """Get database port with priority: DB_PORT > MYSQL_PORT > 3306."""
+        """Get database port with priority: DB_PORT (RDS/Aurora) > MYSQL_PORT (로컬/레거시) > 3306."""
         return self.db_port if self.db_port != 3306 or not self.mysql_port else self.mysql_port
 
     def get_db_user(self) -> str:
-        """Get database user with priority: DB_USER > MYSQL_USER > mlops."""
+        """Get database user with priority: DB_USER (RDS/Aurora) > MYSQL_USER (로컬/레거시) > mlops."""
         return self.db_user or self.mysql_user or "mlops"
 
     def get_db_password(self) -> str:
-        """Get database password with priority: DB_PASSWORD > MYSQL_PASSWORD > mlops1234."""
+        """Get database password with priority: DB_PASSWORD (RDS/Aurora) > MYSQL_PASSWORD (로컬/레거시) > mlops1234."""
         return self.db_password or self.mysql_password or "mlops1234"
 
     def get_db_name(self) -> str:
-        """Get database name with priority: DB_NAME > MYSQL_DATABASE > mlops."""
+        """Get database name with priority: DB_NAME (RDS/Aurora) > MYSQL_DATABASE (로컬/레거시) > mlops."""
         return self.db_name or self.mysql_database or "mlops"
 
     def get_secondary_db_host(self) -> str:
@@ -132,4 +135,4 @@ RESULT_DIR = os.path.join(BASE_DIR, "src/data/result")
 EPOCHS = 300
 LR = 0.001
 BATCH_SIZE = 32
-SQL = "MySQL"
+SQL = "MySQL"  # RDS/Aurora MySQL 호환 엔진 사용

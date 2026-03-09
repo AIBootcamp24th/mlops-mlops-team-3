@@ -15,19 +15,17 @@
 
 - [유준우 (팀장)](https://github.com/joonwoo-yoo)
 - [송민성](https://github.com/alstjd0051)
-- ~~[문성호](https://github.com/Eclipse-Universe)~~
 - [송용단](https://github.com/totalintelli)
 - [이재석](https://github.com/wotjrzm)
 
 ### 기여도
 
-| 팀원 (이름 + GitHub)                                              |                                                                                                     기여도 |
-| ----------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------: |
-| [유준우 (팀장) (@joonwoo-yoo)](https://github.com/joonwoo-yoo)    | ![contribution](https://img.shields.io/badge/contribution-47.62%25-1f6feb?style=for-the-badge&logo=github) |
-| [송민성 (@alstjd0051)](https://github.com/alstjd0051)             | ![contribution](https://img.shields.io/badge/contribution-52.38%25-2ea043?style=for-the-badge&logo=github) |
-| [문성호 (@Eclipse-Universe)](https://github.com/Eclipse-Universe) |  ![contribution](https://img.shields.io/badge/contribution-0.00%25-9e9e9e?style=for-the-badge&logo=github) |
-| [송용단 (@totalintelli)](https://github.com/totalintelli)         |  ![contribution](https://img.shields.io/badge/contribution-0.00%25-9e9e9e?style=for-the-badge&logo=github) |
-| [이재석 (@wotjrzm)](https://github.com/wotjrzm)                   |  ![contribution](https://img.shields.io/badge/contribution-0.00%25-9e9e9e?style=for-the-badge&logo=github) |
+| 팀원 (이름 + GitHub)                                           |                                                                                                     기여도 |
+| -------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------: |
+| [유준우 (팀장) (@joonwoo-yoo)](https://github.com/joonwoo-yoo) | ![contribution](https://img.shields.io/badge/contribution-47.62%25-1f6feb?style=for-the-badge&logo=github) |
+| [송민성 (@alstjd0051)](https://github.com/alstjd0051)          | ![contribution](https://img.shields.io/badge/contribution-52.38%25-2ea043?style=for-the-badge&logo=github) |
+| [송용단 (@totalintelli)](https://github.com/totalintelli)      |  ![contribution](https://img.shields.io/badge/contribution-0.00%25-9e9e9e?style=for-the-badge&logo=github) |
+| [이재석 (@wotjrzm)](https://github.com/wotjrzm)                |  ![contribution](https://img.shields.io/badge/contribution-0.00%25-9e9e9e?style=for-the-badge&logo=github) |
 
 <!-- contribution-table:end -->
 
@@ -43,7 +41,6 @@
 
 ### MLOps, AI 모델링 지원
 
-- ~~문성호 님~~ => 참여 부진
 - 송용단 님
 - 송민성 님
 
@@ -58,22 +55,73 @@
 
 ```mermaid
 graph LR
-  A[GitHub Push or PR] --> B[GitHub Actions CI]
-  N[Airflow Scheduler/Manual Trigger] --> D
-  B --> C[uv sync + ruff + pytest]
-  D[Airflow Train Dispatch] --> E[SQS train-queue]
-  E --> F[Python Worker]
-  F --> G[S3 Raw Data Download]
-  F --> H[StandardScaler plus PyTorch Training]
-  H --> I[W&B Artifact candidate and champion alias]
-  H --> J[S3 Immutable Model Upload models runs run_id]
-  I --> R[Register Champion]
-  R --> S[S3 Champion Registry models registry champion json]
-  F --> K[Slack Custom Notification]
-  L[Batch Inference Worker] --> S
-  L --> M[S3 Prediction Output]
-  L --> I
+  gitPush[GitHub PushPR] --> ci[GitHub Actions CI]
+  ci --> ciCheck[uv sync + ruff + pytest]
+  ciCheck --> ciNotify[Slack Notify]
+
+  trainSchedule[Airflow Train Schedule] --> trainValidate[validate_env]
+  trainValidate --> syncDb[sync_tmdb_to_db]
+  syncDb --> trainDispatch[dispatch_train_message]
+  trainDispatch --> trainQueue[SQS train-queue]
+  trainQueue --> trainWorker[run_train_worker_once]
+  trainWorker --> s3Raw[S3 raw train.csv]
+  trainWorker --> pytorchTrain[PyTorch Training]
+  pytorchTrain --> wandbTrack[WandB Metrics Artifact]
+  pytorchTrain --> s3Model[S3 models runs]
+  trainWorker --> qualityGate[quality_gate_candidate]
+  qualityGate --> champion[WandB champion + S3 registry]
+
+  inferSchedule[Airflow Infer Schedule] --> inferValidate[validate_env]
+  inferValidate --> inferDispatch[dispatch_infer_message]
+  inferDispatch --> inferQueue[SQS infer-queue]
+  inferQueue --> inferWorker[run_infer_worker]
+  inferWorker --> s3Pred[S3 pred output]
+
+  apiRequest[Client Request analyze] --> apiService[FastAPI API]
+  apiService --> modelLoad[S3 champion model load]
+  apiService --> tmdbLookup[TMDB lookup]
+  apiService --> dbLog[RDS Aurora MySQL logging]
+
+  deployScript[deploy_api_aws.sh] --> amd64Build[Build linux amd64 image]
+  amd64Build --> ec2Deploy[EC2 deploy + health check]
+
+  failureSignal[Failure Queue Backlog] --> slackAlert[Slack Alert]
 ```
+
+### 현재 운영 Flow 정의
+
+1. **CI Flow**
+   - `push`/`pull_request` 발생 시 GitHub Actions가 `uv sync`, `ruff`, `pytest`를 수행합니다.
+   - 결과는 Slack 알림 워크플로우와 연결되어 품질 게이트 상태를 공유합니다.
+
+2. **학습 Flow (Airflow + SQS + Worker)**
+   - `mlops_train_pipeline`가 `validate_env -> sync_tmdb_to_db -> dispatch_train_message -> run_train_worker_once -> quality_gate_candidate` 순서로 실행됩니다.
+   - SQS는 디스패치 경로를 유지하고, 실제 학습은 현재 DAG task 내부 워커(`run_train_worker_once`)에서 수행됩니다.
+   - 학습 결과는 S3 모델 경로와 W&B에 기록되고, 품질 게이트 후 champion 포인터를 갱신합니다.
+
+3. **배치 추론 Flow**
+   - `mlops_infer_pipeline`가 `validate_env -> dispatch_infer_message`를 수행해 SQS `infer-queue`에 작업을 발행합니다.
+   - 추론 워커가 큐를 소비해 S3 입력/모델을 사용해 배치 추론을 실행하고 결과를 S3 `pred`에 저장합니다.
+
+4. **API 서비스 Flow**
+   - `/analyze`, `/analyze/id` 요청이 들어오면 API가 모델을 로드해 예측을 계산하고 추천 결과를 반환합니다.
+   - 요청/응답 메타 로그는 RDS/Aurora(MySQL 호환) 경로로 비차단 저장됩니다.
+
+5. **AWS 배포 Flow**
+   - `scripts/deploy_api_aws.sh`가 `linux/amd64` 이미지 빌드(또는 `SKIP_BUILD=true` 재사용) 후 EC2로 전송/기동하고 `/health`로 배포 검증합니다.
+
+### 기술 스택 역할
+
+- **Python, uv**: 의존성 관리 및 실행 환경 표준화. `uv sync`로 로컬/CI/Docker 환경 일관성 유지
+- **PyTorch**: 모델 학습 엔진. 학습(`src/train/run_train.py`)과 추론(`src/infer/`) 코드 분리
+- **AWS S3**: 데이터 레이크 및 모델 저장소. `raw/`, `models/`, `pred/` prefix로 단계별 데이터 관리
+- **AWS SQS**: 학습/배치 추론 디스패치 큐. Airflow가 작업을 큐에 발행하고 워커가 소비하는 비동기 처리 구조
+- **W&B**: 실험 추적 및 모델 거버넌스. metric, hyperparameter, artifact를 연결해 재현성 확보
+- **GitHub Actions**: CI 자동화. 코드 품질 검사(`ruff`, `pytest`), Docker 이미지 빌드, 학습 파이프라인 트리거
+- **Slack Bot**: 운영 가시성. 학습 실패, 큐 적체, 성능 저하 알림
+- **Docker**: 실행 환경 고정. 학습 워커, 추론 워커, API 서비스 컨테이너화
+- **Airflow**: 배치 파이프라인 오케스트레이터. DAG 기반 워크플로우 정의 및 스케줄 실행
+- **RDS/Aurora**: 운영 메타데이터 및 서비스용 관계형 저장소. 예측 결과, 요청 상태, 배치 실행 메타 저장
 
 ## 6. Quick Start (uv)
 
@@ -100,37 +148,53 @@ cp .env.example .env
 
 ## 8. Airflow 오케스트레이션
 
-- DAG 1: `airflow/dags/mlops_train_pipeline.py`
-  - `validate_env` -> `dispatch_train_message` -> `run_train_worker_once` -> `quality_gate_candidate`
-  - 스케줄: 매일 UTC `02:00` (`0 2 * * *`)
-  - 실행 기간: `2026-02-27` ~ `2026-03-15` (`start_date`/`end_date` 고정)
-  - 학습 워커가 별도 상시 실행되지 않아도 DAG 내부에서 1회 학습을 직접 수행
-- DAG 2: `airflow/dags/mlops_infer_pipeline.py`
-  - `validate_env` -> `dispatch_infer_message`
-  - 스케줄: 매일 UTC `02:30` (`30 2 * * *`)
-  - 실행 기간: `2026-02-27` ~ `2026-03-15` (`start_date`/`end_date` 고정)
-- DAG 3: `airflow/dags/mlops_train_then_infer_pipeline.py`
-  - 수동 1회 트리거로 `학습 DAG` 완료 후 `추론 DAG`를 순차 실행
-  - 내부 순서: `trigger_train_pipeline` -> `trigger_infer_pipeline`
-- DAG 4: `airflow/dags/mlops_datasets_observer.py`
-  - Dataset 이벤트 기반 관찰용 DAG
-- 원클릭 순차 실행 흐름:
+### 현재 구현: 배치 파이프라인 중심
 
-```mermaid
-graph LR
-  A[Manual Trigger<br/>mlops_train_then_infer_pipeline] --> B[Trigger Train DAG]
-  B --> C[mlops_train_pipeline Success]
-  C --> D[Trigger Infer DAG]
-  D --> E[mlops_infer_pipeline Success]
-```
+Airflow는 배치 워크플로우 오케스트레이션에 사용됩니다. 학습과 배치 추론을 SQS 큐를 통해 디스패치하는 구조입니다.
 
-- 역할: Airflow가 SQS 학습/배치추론 트리거를 오케스트레이션
-- 학습 메시지 전략: `scripts/send_sqs_message.py`가 W&B의 최근 성능 기준으로 best profile 1건을 선택해 SQS에 전송 (조회 실패 시 baseline 폴백)
-- 품질 게이트 정책: Airflow DAG의 `quality_gate_candidate`는 기본적으로 비차단 모드(`QUALITY_GATE_REQUIRED=false`)로 경고만 기록하고 DAG는 성공 처리
-- 챔피언 전략:
+#### DAG 구성
+
+**DAG 1: `mlops_train_pipeline.py`**
+
+- **실제 흐름**: `validate_env` -> `sync_tmdb_to_db` -> `dispatch_train_message` -> `run_train_worker_once` -> `quality_gate_candidate`
+- **스케줄**: 매일 UTC `02:00` (`0 2 * * *`)
+- **실행 기간**: `2026-02-27` ~ `2026-03-15`
+- **특징**: DAG 내부에서 학습 워커를 직접 실행 (`run_train_worker_once`). SQS 메시지는 디스패치만 하고 실제 학습은 DAG task에서 수행
+
+**DAG 2: `mlops_infer_pipeline.py`**
+
+- **실제 흐름**: `validate_env` -> `dispatch_infer_message`
+- **스케줄**: 매일 UTC `02:30` (`30 2 * * *`)
+- **역할**: 배치 추론 메시지를 SQS `infer-queue`에 발행만 수행. 실제 추론 워커는 별도 프로세스가 큐에서 소비
+
+**DAG 3: `mlops_train_then_infer_pipeline.py`**
+
+- 수동 트리거로 학습 DAG 완료 후 추론 DAG 순차 실행
+- 내부 순서: `trigger_train_pipeline` -> `trigger_infer_pipeline`
+
+**DAG 4: `mlops_datasets_observer.py`**
+
+- Dataset 이벤트 기반 관찰용 DAG
+
+#### SQS 디스패치 전략
+
+- **학습 큐**: `scripts/send_sqs_message.py`가 W&B 최근 성능 기준으로 best profile 선택 후 SQS에 전송 (조회 실패 시 baseline 폴백)
+- **추론 큐**: `scripts/send_infer_sqs_message.py`가 배치 추론 메시지 발행
+- **역할**: Airflow는 작업 디스패치만 담당하고, 실제 워커는 큐에서 메시지를 소비해 처리
+
+#### 품질 게이트 및 모델 관리
+
+- **품질 게이트**: `quality_gate_candidate` task는 기본적으로 비차단 모드(`QUALITY_GATE_REQUIRED=false`). 통과 run이 없어도 경고만 기록하고 DAG는 성공 처리
+- **챔피언 전략**:
   - W&B: 품질 게이트 통과 run 중 최적 후보를 `champion` alias로 사용
   - S3: 모델 파일은 `models/runs/{run_id}/rating_model.pt` immutable 키 유지 + 버킷 Versioning 사용
   - 레지스트리: `scripts/register_model.py`가 `models/registry/champion.json` 포인터를 갱신하고, 추론은 이 포인터를 조회해 실제 모델 키를 결정
+
+### 확장 전략 (향후 목표)
+
+향후 더 세분화된 DAG 구조로 확장 가능:
+
+- `daily_data_ingest` -> `data_validation` -> `feature_build` -> `train_model` -> `evaluate_model` -> `register_model` -> `batch_inference` -> `write_predictions_to_rds` -> `notify_slack`
 
 ## 9. 예측 API 서비스
 
@@ -228,79 +292,104 @@ uv run python -m src.train.run_train
 - 기본 타깃 라벨: `vote_average`
 - 기본 피처: `budget`, `runtime`, `popularity`, `vote_count`
 
-## 14. Database Infrastructure (MySQL 8.4 LTS)
+## 14. Database Infrastructure
 
-- TMDB 한국 영화 원천 데이터 적재 및 예측 로그 관리를 위해 Docker 기반의 MySQL을 사용
+### 전략: RDS/Aurora 우선, 로컬 MySQL은 개발/대체 경로
 
-### 1) 주요 설정
+운영 환경에서는 **RDS MySQL 또는 Aurora MySQL**을 우선 사용하고, 로컬 개발/테스트 환경에서는 Docker 기반 MySQL을 fallback으로 사용합니다.
 
-- **Engine**: MySQL 8.4 LTS
-- **Character Set**: `utf8mb4` (한글 및 이모지 지원)
-- **Timezone**: `Asia/Seoul`
-- **Initial Schema**: `database/scripts/01_schema.sql`, `03_analyze_id_prediction_logs.sql` (컨테이너 실행 시 자동 로드)
+### 1) DB 연결 우선순위
 
-### 2) 데이터베이스 스키마 구조
+`src/config.py`의 연결 우선순위:
 
-- `movies_raw`: TMDB API에서 수집한 한국 영화(`ko`) 원천 데이터
-- `prediction_logs`: 모델 버전별 영화 평점 예측 이력 관리
+1. **`DB_*` 변수** (RDS/Aurora 엔드포인트): 운영 환경에서 Terraform output으로 설정
+2. **`MYSQL_*` 변수** (로컬/레거시): 개발 환경 fallback
+3. **기본값**: `localhost:3306`, `mlops/mlops1234`
 
-### 3) 환경 변수 설정 (Local 실행 시 필수)
+```python
+# 우선순위: DB_HOST (RDS/Aurora) > MYSQL_HOST (로컬) > localhost
+db_host = settings.get_db_host()  # RDS/Aurora 엔드포인트 우선
+```
 
-프로젝트 루트에 아래 두 파일이 있어야 DB 컨테이너가 정상 작동
+### 2) 운영 환경 설정 (RDS/Aurora)
 
-- `.env`: `DB_NAME`, `DB_ROOT_PASSWORD`, `DB_USER`, `DB_PASSWORD`, `DB_HOST`, `DB_PORT` 설정
-- DB_NAME=movie_prediction_db
-- DB_ROOT_PASSWORD=admin
-- DB_USER=[각자 설정] --> 개인 개발 단계에서는 각자 설정하고 배포/서버 단계에서는 통일
-- DB_PASSWORD=[각자 설정]
-- DB_HOST=localhost **(로컬에서 실행시)**
-- DB_HOST=db **(컨테이너에서 실행시)**
-- DB_PORT=3306
-- DB_AUTO_FAILOVER=true
-- DB_FALLBACK_HOSTS=db,localhost,127.0.0.1,host.docker.internal
-- DB_PROBE_TIMEOUT_SECONDS=0.6
+Terraform으로 RDS/Aurora를 생성한 경우:
 
-### 4) 실행 및 검증 (Common Docker Environment)
+```bash
+# Terraform output으로 엔드포인트 확인
+terraform output -raw rds_mysql_endpoint
+# 또는
+terraform output -raw aurora_mysql_endpoint
+
+# .env에 설정
+DB_HOST=<rds_or_aurora_endpoint>
+DB_PORT=3306
+DB_USER=<db_user>
+DB_PASSWORD=<db_password>
+DB_NAME=movie_prediction_db
+```
+
+### 3) 로컬 개발 환경 설정 (Docker MySQL)
+
+로컬 개발 시 Docker 기반 MySQL 사용:
 
 ```bash
 # DB 서비스 실행
 docker compose up -d db
 
-# 실행 상태 및 포트 매핑 확인 (3306 포트 점유 여부)
-docker ps --filter "name=movie_prediction_db"
-
-# 스키마 적용 로그 확인
-docker logs -f movie_prediction_db
+# .env 설정 (로컬)
+DB_HOST=localhost  # 또는 db (컨테이너 간 통신)
+DB_PORT=3306
+DB_USER=<개인 설정>
+DB_PASSWORD=<개인 설정>
+DB_NAME=movie_prediction_db
+DB_AUTO_FAILOVER=true
+DB_FALLBACK_HOSTS=db,localhost,127.0.0.1,host.docker.internal
 ```
 
-### 5) Data Ingestion (Crawler)
+### 4) 주요 설정
 
-- **Source**: TMDB API (`discover/movie`)
-- **Filter**: `region=KR`, `original_language=ko`
-- **Logic**: 수집된 데이터는 `ON DUPLICATE KEY UPDATE` 방식을 통해 중복 없이 최신 상태로 유지
-- **Trigger**: 현재 DB 건수가 목표치(`MAX_PAGE` × 20)에 단 1개라도 미달할 경우 즉시 수집기 가동 (`Strict Data Integrity`)
+- **Engine**: MySQL 8.4 LTS (RDS/Aurora 호환)
+- **Character Set**: `utf8mb4` (한글 및 이모지 지원)
+- **Timezone**: `Asia/Seoul`
+- **Initial Schema**: `database/scripts/01_schema.sql`, `03_analyze_id_prediction_logs.sql` (컨테이너 실행 시 자동 로드)
 
-### 6) 모델 학습 (Main Pipeline)
+### 5) 데이터베이스 스키마 구조
 
-- 데이터 소스를 로컬 CSV에서 **MySQL DB**로 전환
-- 실행 시 DB 데이터를 우선 조회하며, 데이터가 없을 경우에만 자동 수집 진행
+- `movies_raw`: TMDB API에서 수집한 한국 영화(`ko`) 원천 데이터
+- `prediction_logs` / `analyze_id_prediction_logs`: 모델 버전별 영화 평점 예측 이력 관리
 
-### 7) Database Schema (`movies_raw` table)
+### 6) Database Schema (`movies_raw` table)
 
 | Column         | Type     | Description                        |
 | :------------- | :------- | :--------------------------------- |
 | `tmdb_id`      | INT (PK) | TMDB 고유 ID (학습 시 `id`로 매핑) |
 | `title`        | VARCHAR  | 영화 제목                          |
-| **`budget`**   | INT      | **[신규]** 영화 제작비             |
-| **`runtime`**  | INT      | **[신규]** 상영 시간               |
+| `budget`       | INT      | 영화 제작비                        |
+| `runtime`      | INT      | 상영 시간                          |
 | `popularity`   | FLOAT    | 인기도                             |
 | `vote_average` | FLOAT    | 실제 평점 (Target Variable)        |
 | `vote_count`   | INT      | 투표 수                            |
 | `genres`       | JSON     | 장르 ID 리스트                     |
 
-### 8) MySQL DB 확인용 (현재 약 5,000개의 영화정보 저장)
+### 7) Data Ingestion (Crawler)
+
+- **Source**: TMDB API (`discover/movie`)
+- **Filter**: `region=KR`, `original_language=ko`
+- **Logic**: 수집된 데이터는 `ON DUPLICATE KEY UPDATE` 방식을 통해 중복 없이 최신 상태로 유지
+- **Trigger**: 현재 DB 건수가 목표치(`MAX_PAGE` × 20)에 단 1개라도 미달할 경우 즉시 수집기 가동
+
+### 8) 모델 학습 (Main Pipeline)
+
+- 데이터 소스를 로컬 CSV에서 **RDS/Aurora 또는 로컬 MySQL DB**로 전환
+- 실행 시 DB 데이터를 우선 조회하며, 데이터가 없을 경우에만 자동 수집 진행
+
+### 9) DB 확인
 
 ```bash
-# 프롬프트 창 입력
-docker exec -it movie_prediction_db mysql -u [각자 설정한 DB_USER] -p movie_prediction_db -e "SELECT COUNT(*) AS total_movies FROM movies_raw;"
+# 로컬 MySQL 확인
+docker exec -it movie_prediction_db mysql -u <DB_USER> -p movie_prediction_db -e "SELECT COUNT(*) AS total_movies FROM movies_raw;"
+
+# RDS/Aurora 확인 (로컬에서)
+mysql -h <DB_HOST> -u <DB_USER> -p movie_prediction_db -e "SELECT COUNT(*) AS total_movies FROM movies_raw;"
 ```

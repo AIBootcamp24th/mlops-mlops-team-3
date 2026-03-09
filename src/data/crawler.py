@@ -5,6 +5,7 @@ from urllib.parse import quote_plus
 import pandas as pd
 import requests
 from sqlalchemy import create_engine, text
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import sessionmaker
 from tqdm import tqdm
 
@@ -95,6 +96,8 @@ class TMDBCollector:
         print(f"- {len(df)}개의 데이터를 {SQL} DB에 저장 시작")
         db = SessionLocal()
         secondary_db = self._create_secondary_session()
+        commit_batch_size = 25
+        max_lock_retries = 4
         try:
             query = text("""
                 INSERT INTO movies_raw 
@@ -112,7 +115,7 @@ class TMDBCollector:
                 overview = VALUES(overview)
             """)
 
-            for _, row in df.iterrows():
+            for index, (_, row) in enumerate(df.iterrows(), start=1):
                 params = {
                     "id": row.get("id"),
                     "title": row.get("title"),
@@ -130,9 +133,31 @@ class TMDBCollector:
                     "budget": row.get("budget", 0),
                     "runtime": row.get("runtime", 0),
                 }
-                db.execute(query, params)
-                if secondary_db is not None:
-                    secondary_db.execute(query, params)
+                for attempt in range(1, max_lock_retries + 1):
+                    try:
+                        db.execute(query, params)
+                        if secondary_db is not None:
+                            secondary_db.execute(query, params)
+                        break
+                    except OperationalError as e:
+                        message = str(e).lower()
+                        is_lock_timeout = "1205" in message or "lock wait timeout" in message
+                        if not is_lock_timeout or attempt == max_lock_retries:
+                            raise
+                        db.rollback()
+                        if secondary_db is not None:
+                            secondary_db.rollback()
+                        wait_seconds = 0.4 * attempt
+                        print(
+                            f"- {SQL} DB lock wait timeout 감지 (재시도 {attempt}/{max_lock_retries}) "
+                            f"-> {wait_seconds:.1f}초 대기"
+                        )
+                        time.sleep(wait_seconds)
+
+                if index % commit_batch_size == 0:
+                    db.commit()
+                    if secondary_db is not None:
+                        secondary_db.commit()
 
             db.commit()
             if secondary_db is not None:

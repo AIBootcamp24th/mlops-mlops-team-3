@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 
 class MySQLAnalyzeByIdLogger:
-    """/analyze/id 응답을 MySQL(RDS)에 비차단으로 저장한다."""
+    """/analyze/id 응답을 RDS/Aurora(MySQL 호환) 또는 로컬 MySQL에 비차단으로 저장한다."""
 
     def __init__(self) -> None:
         self.host = settings.get_db_host().strip()
@@ -40,9 +40,9 @@ class MySQLAnalyzeByIdLogger:
         )
 
         if pymysql is None:
-            logger.warning("pymysql 미설치로 인해 MySQL 로깅이 비활성화됩니다.")
+            logger.warning("pymysql 미설치로 인해 DB 로깅이 비활성화됩니다.")
         if self.table_name and not self._valid_table:
-            logger.warning("MySQL 테이블명 형식이 올바르지 않아 로깅이 비활성화됩니다: %s", self.table_name)
+            logger.warning("DB 테이블명 형식이 올바르지 않아 로깅이 비활성화됩니다: %s", self.table_name)
 
     @staticmethod
     def _sanitize_table_name(table_name: str) -> str:
@@ -106,7 +106,7 @@ class MySQLAnalyzeByIdLogger:
                         ),
                     )
         except Exception as exc:  # noqa: BLE001 - 로깅 실패는 서비스 흐름을 막지 않는다.
-            logger.warning("MySQL analyze/id 로깅 실패: %s", exc)
+            logger.warning("DB analyze/id 로깅 실패 (RDS/Aurora 또는 MySQL): %s", exc)
 
 
 mysql_analyze_by_id_logger = MySQLAnalyzeByIdLogger()

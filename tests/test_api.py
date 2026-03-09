@@ -1,5 +1,7 @@
+import pytest
 from fastapi.testclient import TestClient
 
+import src.api.main as api_main
 from src.api.main import app, predictor, tmdb_client
 
 
@@ -18,6 +20,15 @@ def _movie_detail(movie_id: int, title: str) -> dict:
         "vote_count": 1000,
         "vote_average": 7.5,
     }
+
+
+@pytest.fixture(autouse=True)
+def _mock_db_paths_and_async_logger(monkeypatch) -> None:
+    """테스트가 로컬 DB 상태에 영향받지 않도록 DB 조회 경로를 기본 비활성화한다."""
+    monkeypatch.setattr(api_main, "_resolve_db_movie_by_title", lambda _title: None)
+    monkeypatch.setattr(api_main, "_resolve_db_movie_by_id", lambda _movie_id: None)
+    monkeypatch.setattr(api_main, "_recommendations_from_db", lambda _base_movie_id, _limit: [])
+    monkeypatch.setattr(api_main.mysql_analyze_by_id_logger, "log", lambda **_kwargs: None)
 
 
 def test_health() -> None:
