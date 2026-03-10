@@ -27,13 +27,17 @@ from src.train.model import RatingRegressor
 from src.train.trainer import evaluate, train_one_epoch
 
 
-def _load_payload() -> dict[str, Any]:
-    message = receive_message(settings.train_queue_url)
-    if not message:
-        raise RuntimeError("학습 큐 메시지가 없습니다.")
-    payload = json.loads(message["Body"])
-    payload["_receipt_handle"] = message["ReceiptHandle"]
-    return payload
+def _load_payload(max_attempts: int = 6, wait_seconds: int = 10) -> dict[str, Any]:
+    # dispatch 직후 SQS 반영/경합 이슈를 고려해 짧은 폴링 재시도를 수행한다.
+    for attempt in range(1, max_attempts + 1):
+        message = receive_message(settings.train_queue_url, wait_seconds=wait_seconds)
+        if message:
+            payload = json.loads(message["Body"])
+            payload["_receipt_handle"] = message["ReceiptHandle"]
+            return payload
+        print(f"학습 큐 폴링 재시도 {attempt}/{max_attempts}: 메시지 없음")
+
+    raise RuntimeError("학습 큐 메시지가 없습니다.")
 
 
 def _set_global_seed(seed: int) -> None:

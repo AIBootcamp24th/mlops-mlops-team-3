@@ -3,7 +3,6 @@
 
 wandb/
 /src/data/raw/
-
 # processed data
 src/data/processed/
 
@@ -13,6 +12,7 @@ src/model/*.pkl
 
 # inference outputs
 src/data/result/*.csv
+/src/data/result/
 
 
 ### JupyterNotebooks ###
@@ -202,6 +202,7 @@ celerybeat.pid
 .env
 .env.secrets
 remote.env
+.env.backup.*
 
 # 원격 서버 연결 정보 (보안)
 .venv

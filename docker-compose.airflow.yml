@@ -40,7 +40,7 @@ services:
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: mysql+pymysql://airflow:airflow@airflow-mysql:3306/airflow?charset=utf8mb4
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
       AIRFLOW__API__AUTH_BACKENDS: airflow.api.auth.backend.basic_auth
-      _PIP_ADDITIONAL_REQUIREMENTS: "boto3>=1.37.0 pydantic-settings>=2.7.0 wandb>=0.19.0 torch>=2.6.0 scikit-learn>=1.6.0"
+      _PIP_ADDITIONAL_REQUIREMENTS: "boto3>=1.37.0 pydantic-settings>=2.7.0 wandb>=0.19.0 torch>=2.6.0 scikit-learn>=1.6.0 tqdm>=4.67.0 sqlalchemy<2 pymysql>=1.1.0"
       AWS_REGION: ${AWS_REGION:-}
       AWS_DEFAULT_REGION: ${AWS_REGION:-}
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}

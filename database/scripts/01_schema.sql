@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS movies_raw (
     vote_count INT,
     popularity FLOAT,
     original_language VARCHAR(10),
+    poster_path VARCHAR(255),
     genres JSON,
     extracted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     INDEX idx_language (original_language),

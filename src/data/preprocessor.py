@@ -50,7 +50,6 @@ def add_log_features(df: pd.DataFrame) -> pd.DataFrame:
 
     return df
 
-
 def add_derived_features(df: pd.DataFrame) -> pd.DataFrame:
     current_year = pd.Timestamp.now().year
 
