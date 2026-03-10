@@ -326,7 +326,7 @@ DB_HOST=<rds_or_aurora_endpoint>
 DB_PORT=3306
 DB_USER=<db_user>
 DB_PASSWORD=<db_password>
-DB_NAME=movie_prediction_db
+DB_NAME=mlops
 ```
 
 ### 3) 로컬 개발 환경 설정 (Docker MySQL)
@@ -342,7 +342,7 @@ DB_HOST=localhost  # 또는 db (컨테이너 간 통신)
 DB_PORT=3306
 DB_USER=<개인 설정>
 DB_PASSWORD=<개인 설정>
-DB_NAME=movie_prediction_db
+DB_NAME=mlops
 DB_AUTO_FAILOVER=true
 DB_FALLBACK_HOSTS=db,localhost,127.0.0.1,host.docker.internal
 ```
@@ -388,8 +388,8 @@ DB_FALLBACK_HOSTS=db,localhost,127.0.0.1,host.docker.internal
 
 ```bash
 # 로컬 MySQL 확인
-docker exec -it movie_prediction_db mysql -u <DB_USER> -p movie_prediction_db -e "SELECT COUNT(*) AS total_movies FROM movies_raw;"
+docker exec -it mlops mysql -u <DB_USER> -p mlops -e "SELECT COUNT(*) AS total_movies FROM movies_raw;"
 
 # RDS/Aurora 확인 (로컬에서)
-mysql -h <DB_HOST> -u <DB_USER> -p movie_prediction_db -e "SELECT COUNT(*) AS total_movies FROM movies_raw;"
+mysql -h <DB_HOST> -u <DB_USER> -p mlops -e "SELECT COUNT(*) AS total_movies FROM movies_raw;"
 ```
