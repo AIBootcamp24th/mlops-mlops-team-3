@@ -86,6 +86,15 @@ with DAG(
         python_callable=check_for_data_changes,
     )
 
+    validate_quality = BashOperator(
+        task_id="validate_data_quality",
+        append_env=True,
+        env={
+            "PYTHONPATH": "/opt/airflow/project",
+        },
+        bash_command="cd /opt/airflow/project && python scripts/validate_data_quality.py",
+    )
+
     export_s3 = BashOperator(
         task_id="export_db_to_s3",
         append_env=True,
@@ -125,4 +134,4 @@ with DAG(
         bash_command="cd /opt/airflow/project && python scripts/register_model.py",
     )
 
-    env_check >> sync_tmdb_to_db >> check_data >> export_s3 >> dispatch_train >> run_train_once >> quality_gate
+    env_check >> sync_tmdb_to_db >> check_data >> validate_quality >> export_s3 >> dispatch_train >> run_train_once >> quality_gate
