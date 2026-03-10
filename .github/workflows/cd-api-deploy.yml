@@ -1,0 +1,81 @@
+name: CD API Deploy to AWS
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cd-api-deploy-main
+  cancel-in-progress: false
+
+jobs:
+  deploy-api:
+    if: >-
+      ${{
+        github.event.workflow_run.conclusion == 'success'
+        && github.event.workflow_run.head_branch == 'main'
+      }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout merged main commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Prepare SSH keys for deploy script
+        shell: bash
+        working-directory: mlops_project
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.AWS_DEPLOY_SSH_PRIVATE_KEY }}
+          SSH_PUBLIC_KEY: ${{ secrets.AWS_DEPLOY_SSH_PUBLIC_KEY }}
+        run: |
+          set -euo pipefail
+          test -n "${SSH_PRIVATE_KEY}"
+          test -n "${SSH_PUBLIC_KEY}"
+
+          mkdir -p .tmp
+          printf "%s\n" "${SSH_PRIVATE_KEY}" > .tmp/deploy_key
+          printf "%s\n" "${SSH_PUBLIC_KEY}" > .tmp/deploy_key.pub
+          chmod 600 .tmp/deploy_key
+          chmod 644 .tmp/deploy_key.pub
+
+      - name: Deploy API to AWS EC2
+        shell: bash
+        working-directory: mlops_project
+        env:
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+          INSTANCE_ID: ${{ secrets.AWS_DEPLOY_INSTANCE_ID }}
+          INSTANCE_AZ: ${{ secrets.AWS_DEPLOY_INSTANCE_AZ }}
+          REMOTE_HOST: ${{ secrets.AWS_DEPLOY_REMOTE_HOST }}
+          REMOTE_USER: ${{ vars.AWS_DEPLOY_REMOTE_USER }}
+          REMOTE_PORT: ${{ vars.AWS_DEPLOY_REMOTE_PORT }}
+          REMOTE_DIR: ${{ vars.AWS_DEPLOY_REMOTE_DIR }}
+          API_PORT: ${{ vars.AWS_DEPLOY_API_PORT }}
+          PRUNE_REMOTE: ${{ vars.AWS_DEPLOY_PRUNE_REMOTE }}
+          SKIP_BUILD: "false"
+          SSH_KEY: .tmp/deploy_key
+          SSH_PUBLIC_KEY: .tmp/deploy_key.pub
+        run: |
+          set -euo pipefail
+          bash scripts/deploy_api_aws.sh
+
+      - name: Cleanup temporary SSH keys
+        if: ${{ always() }}
+        shell: bash
+        working-directory: mlops_project
+        run: |
+          rm -f .tmp/deploy_key .tmp/deploy_key.pub

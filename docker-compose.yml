@@ -32,4 +32,35 @@ services:
     command: ["uv", "run", "uvicorn", "src.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
     ports:
       - "8000:8000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     restart: unless-stopped
+
+  db:
+      image: mysql:8.4
+      container_name: movie_prediction_db
+      restart: unless-stopped
+      platform: linux/amd64
+      env_file:
+        - .env
+      environment:
+        MYSQL_DATABASE: ${MYSQL_DATABASE:-mlops}
+        MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-admin}
+        MYSQL_USER: ${MYSQL_USER:-mlops}
+        MYSQL_PASSWORD: ${MYSQL_PASSWORD:-mlops1234}
+        TZ: Asia/Seoul
+      ports:
+        - "3306:3306"
+      volumes:
+        - mysql_data:/var/lib/mysql
+        - ./database/scripts:/docker-entrypoint-initdb.d
+      command:
+        - --character-set-server=utf8mb4
+        - --collation-server=utf8mb4_unicode_ci
+
+volumes:
+  mysql_data:

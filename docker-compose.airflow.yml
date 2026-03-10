@@ -1,31 +1,53 @@
 services:
-  airflow-postgres:
-    image: postgres:15
-    container_name: mlops-airflow-postgres
+  airflow-mysql:
+    image: mysql:8.4
+    container_name: mlops-airflow-mysql
     environment:
-      POSTGRES_USER: airflow
-      POSTGRES_PASSWORD: airflow
-      POSTGRES_DB: airflow
+      MYSQL_DATABASE: airflow
+      MYSQL_USER: airflow
+      MYSQL_PASSWORD: airflow
+      MYSQL_ROOT_PASSWORD: airflow-root
+      TZ: Asia/Seoul
     volumes:
-      - airflow-postgres-db-volume:/var/lib/postgresql/data
+      - airflow-mysql-db-volume:/var/lib/mysql
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "mysqladmin",
+          "ping",
+          "-h",
+          "localhost",
+          "-uairflow",
+          "-pairflow",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
     restart: unless-stopped
 
   airflow-init:
     image: apache/airflow:2.10.2-python3.11
     container_name: mlops-airflow-init
     depends_on:
-      airflow-postgres:
-        condition: service_started
+      airflow-mysql:
+        condition: service_healthy
     env_file:
       - .env
       - .env.secrets
     environment: &airflow-common-env
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
-      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@airflow-postgres/airflow
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: mysql+mysqldb://airflow:airflow@airflow-mysql:3306/airflow?charset=utf8mb4
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
       AIRFLOW__API__AUTH_BACKENDS: airflow.api.auth.backend.basic_auth
-      _PIP_ADDITIONAL_REQUIREMENTS: "boto3>=1.37.0 pydantic-settings>=2.7.0 wandb>=0.19.0"
+      _PIP_ADDITIONAL_REQUIREMENTS: "boto3>=1.37.0 pydantic-settings>=2.7.0 wandb>=0.19.0 torch>=2.6.0 scikit-learn>=1.6.0 tqdm>=4.67.0 sqlalchemy<2 pymysql>=1.1.0"
       AWS_REGION: ${AWS_REGION:-}
+      AWS_DEFAULT_REGION: ${AWS_REGION:-}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}
+      AWS_PROFILE: ${AWS_PROFILE:-song.ms}
+      AWS_SDK_LOAD_CONFIG: "1"
       TRAIN_QUEUE_URL: ${TRAIN_QUEUE_URL:-}
       INFER_QUEUE_URL: ${INFER_QUEUE_URL:-}
       WANDB_PROJECT: ${WANDB_PROJECT:-tmdb-rating-mlops}
@@ -37,6 +59,7 @@ services:
       - ./airflow/dags:/opt/airflow/dags
       - ./airflow/logs:/opt/airflow/logs
       - ./:/opt/airflow/project
+      - ${HOME}/.aws:/home/airflow/.aws:ro
     command: >
       bash -c "
       airflow db migrate &&
@@ -46,7 +69,7 @@ services:
       --firstname mlops
       --lastname team
       --role Admin
-      --email admin@example.com
+      --email wsc7202@gmail.com
       "
 
   airflow-webserver:
@@ -80,4 +103,4 @@ services:
     restart: unless-stopped
 
 volumes:
-  airflow-postgres-db-volume:
+  airflow-mysql-db-volume:

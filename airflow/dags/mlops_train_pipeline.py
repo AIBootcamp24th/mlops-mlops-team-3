@@ -49,19 +49,48 @@ with DAG(
     catchup=False,
     tags=["mlops", "train", "sqs", "wandb"],
 ) as dag:
+    # latest 고정 키 대신 Airflow 실행 시점 기반 키를 사용한다.
+    train_data_s3_key = "tmdb/{{ ts_nodash }}/train.csv"
+
     env_check = PythonOperator(
         task_id="validate_env",
         python_callable=validate_runtime_env,
     )
 
+    sync_tmdb_to_db = BashOperator(
+        task_id="sync_tmdb_to_db",
+        append_env=True,
+        env={
+            "PYTHONPATH": "/opt/airflow/project",
+            "TRAIN_DATA_S3_KEY": train_data_s3_key,
+        },
+        bash_command=(
+            "cd /opt/airflow/project && "
+            "python scripts/sync_tmdb_to_db.py"
+        ),
+    )
+
     dispatch_train = BashOperator(
         task_id="dispatch_train_message",
         append_env=True,
-        env={"PYTHONPATH": "/opt/airflow/project"},
+        env={
+            "PYTHONPATH": "/opt/airflow/project",
+            "TRAIN_DATA_S3_KEY": train_data_s3_key,
+        },
         outlets=[TRAIN_DISPATCH_DATASET],
         bash_command=(
             "cd /opt/airflow/project && "
             "python scripts/send_sqs_message.py"
+        ),
+    )
+
+    run_train_once = BashOperator(
+        task_id="run_train_worker_once",
+        append_env=True,
+        env={"PYTHONPATH": "/opt/airflow/project"},
+        bash_command=(
+            "cd /opt/airflow/project && "
+            "python -m src.train.run_train"
         ),
     )
 
@@ -71,6 +100,7 @@ with DAG(
         env={
             "PYTHONPATH": "/opt/airflow/project",
             "QUALITY_GATE_REQUIRED": "false",
+            "QUALITY_GATE_MAX_RUNS": "50",
         },
         bash_command=(
             "cd /opt/airflow/project && "
@@ -78,4 +108,4 @@ with DAG(
         ),
     )
 
-    env_check >> dispatch_train >> quality_gate
+    env_check >> sync_tmdb_to_db >> dispatch_train >> run_train_once >> quality_gate

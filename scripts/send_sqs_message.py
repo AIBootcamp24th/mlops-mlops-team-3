@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+from datetime import datetime
 from typing import Any
 
 import wandb
@@ -63,6 +65,10 @@ def _select_best_profile() -> dict[str, Any] | None:
     return best_profile
 
 
+def _default_train_data_s3_key() -> str:
+    return f"tmdb/{datetime.utcnow().strftime('%Y%m%dT%H%M%S')}/train.csv"
+
+
 def main() -> None:
     fallback_profile = {
         "tuning_profile": "baseline",
@@ -74,15 +80,20 @@ def main() -> None:
         "seed": settings.train_seed,
     }
     selected_profile = fallback_profile
-    try:
-        best_profile = _select_best_profile()
-        if best_profile is not None:
-            selected_profile = best_profile
-    except Exception as exc:
-        print(f"경고: W&B best profile 조회 실패. baseline으로 진행합니다. ({exc})")
+    enable_wandb_lookup = os.getenv("ENABLE_WANDB_PROFILE_LOOKUP", "false").lower() == "true"
+    if enable_wandb_lookup:
+        try:
+            best_profile = _select_best_profile()
+            if best_profile is not None:
+                selected_profile = best_profile
+        except Exception as exc:
+            print(f"경고: W&B best profile 조회 실패. baseline으로 진행합니다. ({exc})")
+    else:
+        print("정보: ENABLE_WANDB_PROFILE_LOOKUP=false 이므로 baseline 프로필로 진행합니다.")
 
+    train_data_s3_key = os.getenv("TRAIN_DATA_S3_KEY", _default_train_data_s3_key())
     payload = {
-        "s3_key": "tmdb/latest/train.csv",
+        "s3_key": train_data_s3_key,
         "target_col": TARGET_COL,
         "feature_cols": FEATURE_COLS,
         **selected_profile,

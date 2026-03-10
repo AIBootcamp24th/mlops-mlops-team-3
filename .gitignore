@@ -2,8 +2,8 @@
 # Edit at https://www.toptal.com/developers/gitignore?templates=windows,macos,linux,python,jupyternotebooks,vim,visualstudiocode
 
 wandb/
-/src/data/raw/*.csv
-/src/data/result/*.csv
+/src/data/raw/
+/src/data/result/
 
 
 ### JupyterNotebooks ###
@@ -193,6 +193,7 @@ celerybeat.pid
 .env
 .env.secrets
 remote.env
+.env.backup.*
 
 # 원격 서버 연결 정보 (보안)
 .venv

@@ -1,9 +1,17 @@
+import json
 import time
+from urllib.parse import quote_plus
 
 import pandas as pd
 import requests
+from sqlalchemy import create_engine, text
+from sqlalchemy.exc import OperationalError
+from sqlalchemy.orm import sessionmaker
 from tqdm import tqdm
 
+from src.config import MAX_PAGE, SQL
+from src.config import settings
+from src.data.database import SessionLocal
 from src.data.preprocess import filter_korean_movies
 
 
@@ -13,7 +21,7 @@ class TMDBCollector:
         self.base_url = "https://api.themoviedb.org/3"
 
     def fetch_tmdb_data(
-        self, max_pages=5, korean_only: bool = True, total_page: int | None = None
+        self, max_pages=MAX_PAGE, korean_only: bool = True, total_page: int | None = None
     ) -> pd.DataFrame:
         all_movies = []
         page_limit = total_page if total_page is not None else max_pages
@@ -24,7 +32,7 @@ class TMDBCollector:
 
         discover_url = f"{self.base_url}/discover/movie"
 
-        for page in tqdm(range(1, page_limit + 1), desc="TMDB 데이터 페이지 수집 시작"):
+        for page in tqdm(range(1, page_limit + 1), desc="- TMDB 데이터 페이지 수집 중"):
             params = {
                 "api_key": self.api_key,
                 "language": "ko-KR",
@@ -53,12 +61,21 @@ class TMDBCollector:
                 print(f"요청 실패: {page} --> {e}")
                 break
 
-        print(f"데이터 수집 완료 : 총 {len(all_movies)}개의 영화 정보.")
+        print(f"\n- 데이터 수집 완료: 총 {len(all_movies)}개의 영화 정보")
+
         df = pd.DataFrame(all_movies)
+
         if korean_only:
             filtered_df = filter_korean_movies(df)
-            print(f"한국 영화 필터 적용 완료 : {len(filtered_df)}개 영화.")
+            print(f"- 한국 영화 필터 적용 완료: {len(filtered_df)}개 영화\n")
+
+            # korean_only 모드에서는 DB 저장도 한국어 원어 영화만 허용한다.
+            if not filtered_df.empty and not self.save_to_db(filtered_df):
+                raise RuntimeError(f"{SQL} DB 저장에 실패했습니다.")
             return filtered_df
+
+        if not df.empty and not self.save_to_db(df):
+            raise RuntimeError(f"{SQL} DB 저장에 실패했습니다.")
         return df
 
     def _get_movie_details(self, movie_id):
@@ -73,3 +90,100 @@ class TMDBCollector:
         except Exception:
             pass
         return {"budget": 0, "runtime": 0}
+
+    def save_to_db(self, df: pd.DataFrame) -> bool:
+        """영화 데이터를 DB에 저장하거나, 중복된 경우 최신 내용으로 갱신합니다."""
+        print(f"- {len(df)}개의 데이터를 {SQL} DB에 저장 시작")
+        db = SessionLocal()
+        secondary_db = self._create_secondary_session()
+        commit_batch_size = 25
+        max_lock_retries = 4
+        try:
+            query = text("""
+                INSERT INTO movies_raw 
+                (tmdb_id, title, original_title, overview, release_date, budget, runtime, vote_average, vote_count, popularity, original_language, poster_path, genres)
+                VALUES 
+                (:id, :title, :original_title, :overview, :release_date, :budget, :runtime, :vote_average, :vote_count, :popularity, :original_language, :poster_path, :genres)
+                ON DUPLICATE KEY UPDATE
+                title = VALUES(title),
+                budget = VALUES(budget),
+                runtime = VALUES(runtime),
+                vote_average = VALUES(vote_average),
+                vote_count = VALUES(vote_count),
+                popularity = VALUES(popularity),
+                poster_path = VALUES(poster_path),
+                overview = VALUES(overview)
+            """)
+
+            for index, (_, row) in enumerate(df.iterrows(), start=1):
+                params = {
+                    "id": row.get("id"),
+                    "title": row.get("title"),
+                    "original_title": row.get("original_title"),
+                    "overview": row.get("overview"),
+                    "release_date": None
+                    if pd.isna(row.get("release_date")) or row.get("release_date") == ""
+                    else row.get("release_date"),  # 날짜가 비어있거나 NaT인 경우 None으로 저장
+                    "vote_average": row.get("vote_average"),
+                    "vote_count": row.get("vote_count"),
+                    "popularity": row.get("popularity"),
+                    "original_language": row.get("original_language"),
+                    "poster_path": row.get("poster_path"),
+                    "genres": json.dumps(row.get("genre_ids", [])),
+                    "budget": row.get("budget", 0),
+                    "runtime": row.get("runtime", 0),
+                }
+                for attempt in range(1, max_lock_retries + 1):
+                    try:
+                        db.execute(query, params)
+                        if secondary_db is not None:
+                            secondary_db.execute(query, params)
+                        break
+                    except OperationalError as e:
+                        message = str(e).lower()
+                        is_lock_timeout = "1205" in message or "lock wait timeout" in message
+                        if not is_lock_timeout or attempt == max_lock_retries:
+                            raise
+                        db.rollback()
+                        if secondary_db is not None:
+                            secondary_db.rollback()
+                        wait_seconds = 0.4 * attempt
+                        print(
+                            f"- {SQL} DB lock wait timeout 감지 (재시도 {attempt}/{max_lock_retries}) "
+                            f"-> {wait_seconds:.1f}초 대기"
+                        )
+                        time.sleep(wait_seconds)
+
+                if index % commit_batch_size == 0:
+                    db.commit()
+                    if secondary_db is not None:
+                        secondary_db.commit()
+
+            db.commit()
+            if secondary_db is not None:
+                secondary_db.commit()
+            print(f"- {SQL} DB 저장 완료")
+            return True
+        except Exception as e:
+            print(f"- {SQL} DB 저장 실패 --> {e}\n")
+            db.rollback()
+            if secondary_db is not None:
+                secondary_db.rollback()
+            return False
+        finally:
+            db.close()
+            if secondary_db is not None:
+                secondary_db.close()
+
+    def _create_secondary_session(self):
+        secondary_host = settings.get_secondary_db_host()
+        if not secondary_host:
+            return None
+
+        database_url = (
+            f"mysql+pymysql://{quote_plus(settings.get_db_user())}:{quote_plus(settings.get_db_password())}@"
+            f"{secondary_host}:{int(settings.get_secondary_db_port())}/{settings.get_db_name()}"
+        )
+        engine = create_engine(database_url, pool_pre_ping=True, echo=False)
+        session_cls = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+        return session_cls()

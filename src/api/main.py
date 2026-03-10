@@ -5,8 +5,11 @@ from contextlib import asynccontextmanager
 
 import requests
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from sqlalchemy import text
 
+from src.api.mysql_logger import mysql_analyze_by_id_logger
 from src.api.schemas import (
     AnalyzeByIdRequest,
     AnalyzeByTitleResponse,
@@ -18,6 +21,8 @@ from src.api.schemas import (
 )
 from src.api.tmdb_client import TMDBClient
 from src.constants import FEATURE_COLS
+from src.config import settings
+from src.data.database import engine
 from src.infer.predictor import ModelPredictor
 from src.reco.personalized import (
     CandidateMovie,
@@ -35,9 +40,11 @@ tmdb_client = TMDBClient()
 async def lifespan(_: FastAPI):
     try:
         predictor.load()
-    except FileNotFoundError:
-        # 모델이 아직 준비되지 않은 환경에서도 API 자체는 기동 가능하게 둔다.
-        pass
+    except (FileNotFoundError, Exception) as exc:
+        # 모델이 아직 준비되지 않았거나 AWS 자격증명이 없는 환경에서도 API 자체는 기동 가능하게 둔다.
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.warning(f"모델 로딩 실패 (API는 계속 실행됩니다): {type(exc).__name__}: {exc}")
     yield
 
 
@@ -57,6 +64,21 @@ app = FastAPI(
             "name": "Movie"
         },
     ],
+)
+
+
+def _parse_cors_origins(raw: str) -> list[str]:
+    if not raw.strip():
+        return ["*"]
+    return [origin.strip() for origin in raw.split(",") if origin.strip()]
+
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_parse_cors_origins(settings.api_cors_allow_origins),
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 
@@ -105,6 +127,116 @@ def _resolve_movie_by_id(movie_id: int) -> dict:
     return tmdb_client.movie_detail(movie_id)
 
 
+def _resolve_db_movie_by_title(title: str) -> dict | None:
+    sql = text(
+        """
+        SELECT
+            tmdb_id, title, original_title, overview, release_date,
+            budget, runtime, vote_average, vote_count, popularity, original_language, poster_path
+        FROM movies_raw
+        WHERE (title = :title OR original_title = :title) AND original_language = 'ko'
+        ORDER BY popularity DESC, vote_count DESC
+        LIMIT 1
+        """
+    )
+    try:
+        with engine.connect() as conn:
+            row = conn.execute(sql, {"title": title}).mappings().first()
+    except Exception:
+        return None
+
+    if not row:
+        return None
+
+    return {
+        "id": int(row["tmdb_id"]),
+        "title": row["title"] or "",
+        "original_title": row["original_title"] or row["title"] or "",
+        "overview": row["overview"] or "",
+        "release_date": str(row["release_date"]) if row["release_date"] else "",
+        "budget": float(row["budget"] or 0.0),
+        "runtime": float(row["runtime"] or 0.0),
+        "vote_average": float(row["vote_average"] or 0.0),
+        "vote_count": float(row["vote_count"] or 0.0),
+        "popularity": float(row["popularity"] or 0.0),
+        "original_language": row["original_language"] or "ko",
+        "poster_path": row["poster_path"],
+        "genres": [],
+    }
+
+
+def _resolve_db_movie_by_id(movie_id: int) -> dict | None:
+    sql = text(
+        """
+        SELECT
+            tmdb_id, title, original_title, overview, release_date,
+            budget, runtime, vote_average, vote_count, popularity, original_language, poster_path
+        FROM movies_raw
+        WHERE tmdb_id = :movie_id AND original_language = 'ko'
+        LIMIT 1
+        """
+    )
+    try:
+        with engine.connect() as conn:
+            row = conn.execute(sql, {"movie_id": movie_id}).mappings().first()
+    except Exception:
+        return None
+
+    if not row:
+        return None
+
+    return {
+        "id": int(row["tmdb_id"]),
+        "title": row["title"] or "",
+        "original_title": row["original_title"] or row["title"] or "",
+        "overview": row["overview"] or "",
+        "release_date": str(row["release_date"]) if row["release_date"] else "",
+        "budget": float(row["budget"] or 0.0),
+        "runtime": float(row["runtime"] or 0.0),
+        "vote_average": float(row["vote_average"] or 0.0),
+        "vote_count": float(row["vote_count"] or 0.0),
+        "popularity": float(row["popularity"] or 0.0),
+        "original_language": row["original_language"] or "ko",
+        "poster_path": row["poster_path"],
+        "genres": [],
+    }
+
+
+def _recommendations_from_db(base_movie_id: int, limit: int) -> list[dict]:
+    sql = text(
+        """
+        SELECT
+            tmdb_id, title, original_title, budget, runtime,
+            vote_average, vote_count, popularity, original_language, poster_path
+        FROM movies_raw
+        WHERE tmdb_id != :base_movie_id AND original_language = 'ko'
+        ORDER BY popularity DESC, vote_count DESC
+        LIMIT :limit
+        """
+    )
+    try:
+        with engine.connect() as conn:
+            rows = conn.execute(sql, {"base_movie_id": base_movie_id, "limit": limit}).mappings().all()
+    except Exception:
+        return []
+
+    return [
+        {
+            "id": int(row["tmdb_id"]),
+            "title": row["title"] or "",
+            "original_title": row["original_title"] or row["title"] or "",
+            "budget": float(row["budget"] or 0.0),
+            "runtime": float(row["runtime"] or 0.0),
+            "vote_average": float(row["vote_average"] or 0.0),
+            "vote_count": float(row["vote_count"] or 0.0),
+            "popularity": float(row["popularity"] or 0.0),
+            "original_language": row["original_language"] or "ko",
+            "poster_path": row["poster_path"],
+        }
+        for row in rows
+    ]
+
+
 def _build_user_history(items: list[UserHistoryItem]) -> list[RatedMovie]:
     history: list[RatedMovie] = []
     resolved_by_title: dict[str, dict] = {}
@@ -138,19 +270,29 @@ def health() -> HealthResponse:
     tags=["Movie"],
 )
 def analyze_by_title(payload: AnalyzeRequest) -> AnalyzeByTitleResponse:
-    try:
-        base_movie = _resolve_movie_by_title(payload.title)
-    except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except requests.RequestException as exc:
-        raise HTTPException(status_code=502, detail=f"TMDB 요청 실패: {exc}") from exc
+    base_movie = _resolve_db_movie_by_title(payload.title)
+    if base_movie is None:
+        try:
+            base_movie = _resolve_movie_by_title(payload.title)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except requests.RequestException as exc:
+            raise HTTPException(status_code=502, detail=f"TMDB 요청 실패: {exc}") from exc
 
-    return _analyze_with_base_movie(
+    result = _analyze_with_base_movie(
         base_movie=base_movie,
         query_value=payload.title,
         top_k=payload.top_k,
         user_history_items=payload.user_history,
     )
+    mysql_analyze_by_id_logger.log(
+        query_movie_id=int(base_movie["id"]),
+        top_k=payload.top_k,
+        user_history_count=len(payload.user_history),
+        movie=result.movie,
+        recommendations=result.recommendations,
+    )
+    return result
 
 
 @app.post(
@@ -160,22 +302,32 @@ def analyze_by_title(payload: AnalyzeRequest) -> AnalyzeByTitleResponse:
     tags=["Movie"],
 )
 def analyze_by_id(payload: AnalyzeByIdRequest) -> AnalyzeByTitleResponse:
-    try:
-        base_movie = _resolve_movie_by_id(payload.movie_id)
-    except requests.HTTPError as exc:
-        status_code = exc.response.status_code if exc.response is not None else 502
-        if status_code == 404:
-            raise HTTPException(status_code=404, detail="해당 movie_id를 찾을 수 없습니다.") from exc
-        raise HTTPException(status_code=502, detail=f"TMDB 요청 실패: {exc}") from exc
-    except requests.RequestException as exc:
-        raise HTTPException(status_code=502, detail=f"TMDB 요청 실패: {exc}") from exc
+    base_movie = _resolve_db_movie_by_id(payload.movie_id)
+    if base_movie is None:
+        try:
+            base_movie = _resolve_movie_by_id(payload.movie_id)
+        except requests.HTTPError as exc:
+            status_code = exc.response.status_code if exc.response is not None else 502
+            if status_code == 404:
+                raise HTTPException(status_code=404, detail="해당 movie_id를 찾을 수 없습니다.") from exc
+            raise HTTPException(status_code=502, detail=f"TMDB 요청 실패: {exc}") from exc
+        except requests.RequestException as exc:
+            raise HTTPException(status_code=502, detail=f"TMDB 요청 실패: {exc}") from exc
 
-    return _analyze_with_base_movie(
+    result = _analyze_with_base_movie(
         base_movie=base_movie,
         query_value=str(payload.movie_id),
         top_k=payload.top_k,
         user_history_items=payload.user_history,
     )
+    mysql_analyze_by_id_logger.log(
+        query_movie_id=payload.movie_id,
+        top_k=payload.top_k,
+        user_history_count=len(payload.user_history),
+        movie=result.movie,
+        recommendations=result.recommendations,
+    )
+    return result
 
 
 def _analyze_with_base_movie(
@@ -185,8 +337,11 @@ def _analyze_with_base_movie(
     top_k: int,
     user_history_items: list[UserHistoryItem],
 ) -> AnalyzeByTitleResponse:
+    db_candidates = _recommendations_from_db(int(base_movie["id"]), max(10, top_k * 3))
     try:
-        recommended = tmdb_client.recommendations(int(base_movie["id"]), max_items=max(10, top_k * 3))
+        recommended = db_candidates
+        if not recommended:
+            recommended = tmdb_client.recommendations(int(base_movie["id"]), max_items=max(10, top_k * 3))
         if not recommended:
             genre_ids = [int(genre["id"]) for genre in base_movie.get("genres", []) if "id" in genre]
             recommended = tmdb_client.discover_korean_by_genres(
@@ -204,10 +359,13 @@ def _analyze_with_base_movie(
     scored_candidates: list[RecommendationItem] = []
     recommended_ids = [int(item["id"]) for item in recommended]
     detail_by_id: dict[int, dict] = {}
-    with ThreadPoolExecutor(max_workers=min(6, max(1, len(recommended_ids)))) as executor:
-        details = executor.map(tmdb_client.movie_detail, recommended_ids)
-        for detail in details:
-            detail_by_id[int(detail["id"])] = detail
+    if db_candidates:
+        detail_by_id = {int(item["id"]): item for item in recommended}
+    else:
+        with ThreadPoolExecutor(max_workers=min(6, max(1, len(recommended_ids)))) as executor:
+            details = executor.map(tmdb_client.movie_detail, recommended_ids)
+            for detail in details:
+                detail_by_id[int(detail["id"])] = detail
 
     for movie_id in recommended_ids:
         detail = detail_by_id[movie_id]
