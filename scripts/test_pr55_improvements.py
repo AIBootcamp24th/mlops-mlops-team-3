@@ -9,10 +9,8 @@
 
 import os
 import sys
-import warnings
 import logging
 from io import StringIO
-from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
 # 프로젝트 루트를 PYTHONPATH에 추가
@@ -162,16 +160,8 @@ def test_3_api_db_logging():
     original_handlers = logger.handlers[:]
     
     try:
-        # DB 연결을 실패시키기 위해 잘못된 호스트 설정
-        import src.api.main as api_main
-        
         # _resolve_db_movie_by_title 함수 테스트
-        # DB 연결 실패를 시뮬레이션하기 위해 engine을 임시로 잘못된 설정으로 변경
-        from src.data.database import engine
-        original_url = str(engine.url)
-        
-        # 잘못된 호스트로 연결 시도 (실제로는 연결하지 않고 로그만 확인)
-        # 대신 함수 내부의 예외 처리 로직을 직접 확인
+        # 실제 DB 연결 없이 코드 검증만 수행
         
         # 로그 메시지 형식 확인
         code_content = ""
