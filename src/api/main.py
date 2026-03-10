@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 
@@ -32,6 +33,7 @@ from src.reco.personalized import (
     personalization_score,
 )
 
+logger = logging.getLogger(__name__)
 predictor = ModelPredictor(feature_cols=FEATURE_COLS)
 tmdb_client = TMDBClient()
 
@@ -142,7 +144,13 @@ def _resolve_db_movie_by_title(title: str) -> dict | None:
     try:
         with engine.connect() as conn:
             row = conn.execute(sql, {"title": title}).mappings().first()
-    except Exception:
+    except Exception as exc:
+        logger.warning(
+            "DB 조회 실패 (제목: %s), TMDB fallback으로 전환: %s",
+            title,
+            exc,
+            exc_info=True,
+        )
         return None
 
     if not row:
@@ -179,7 +187,13 @@ def _resolve_db_movie_by_id(movie_id: int) -> dict | None:
     try:
         with engine.connect() as conn:
             row = conn.execute(sql, {"movie_id": movie_id}).mappings().first()
-    except Exception:
+    except Exception as exc:
+        logger.warning(
+            "DB 조회 실패 (movie_id: %s), TMDB fallback으로 전환: %s",
+            movie_id,
+            exc,
+            exc_info=True,
+        )
         return None
 
     if not row:
@@ -217,7 +231,14 @@ def _recommendations_from_db(base_movie_id: int, limit: int) -> list[dict]:
     try:
         with engine.connect() as conn:
             rows = conn.execute(sql, {"base_movie_id": base_movie_id, "limit": limit}).mappings().all()
-    except Exception:
+    except Exception as exc:
+        logger.warning(
+            "DB 추천 조회 실패 (base_movie_id: %s, limit: %s), 빈 리스트 반환 및 TMDB fallback: %s",
+            base_movie_id,
+            limit,
+            exc,
+            exc_info=True,
+        )
         return []
 
     return [

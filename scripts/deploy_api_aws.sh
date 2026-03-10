@@ -34,7 +34,8 @@ if [[ -f "${PROJECT_ROOT}/remote.env" ]]; then
   set +a
 fi
 
-AWS_PROFILE="${AWS_PROFILE:-song.ms}"
+# AWS_PROFILE은 환경변수로 설정된 경우에만 사용 (GitHub Actions CI 환경에서는 보통 미설정)
+# 로컬 개발 환경에서만 프로파일을 사용하고, CI 환경에서는 aws-actions/configure-aws-credentials로 설정된 자격증명을 사용
 AWS_REGION="${AWS_REGION:-ap-northeast-2}"
 INSTANCE_ID="${INSTANCE_ID:?INSTANCE_ID를 remote.env 또는 환경변수로 설정하세요}"
 INSTANCE_AZ="${INSTANCE_AZ:?INSTANCE_AZ를 remote.env 또는 환경변수로 설정하세요}"
@@ -67,12 +68,21 @@ SKIP_BUILD="${SKIP_BUILD:-false}"
 [[ -n "${CLI_SKIP_BUILD}" ]] && SKIP_BUILD="${CLI_SKIP_BUILD}"
 
 if [[ -z "${REMOTE_HOST:-}" ]]; then
-  REMOTE_HOST="$(aws ec2 describe-instances \
-    --profile "${AWS_PROFILE}" \
-    --region "${AWS_REGION}" \
-    --instance-ids "${INSTANCE_ID}" \
-    --query "Reservations[0].Instances[0].PublicIpAddress" \
-    --output text)"
+  # AWS_PROFILE이 설정된 경우에만 --profile 옵션 사용
+  if [[ -n "${AWS_PROFILE:-}" ]]; then
+    REMOTE_HOST="$(aws ec2 describe-instances \
+      --profile "${AWS_PROFILE}" \
+      --region "${AWS_REGION}" \
+      --instance-ids "${INSTANCE_ID}" \
+      --query "Reservations[0].Instances[0].PublicIpAddress" \
+      --output text)"
+  else
+    REMOTE_HOST="$(aws ec2 describe-instances \
+      --region "${AWS_REGION}" \
+      --instance-ids "${INSTANCE_ID}" \
+      --query "Reservations[0].Instances[0].PublicIpAddress" \
+      --output text)"
+  fi
 fi
 REMOTE_HOST="${REMOTE_HOST:?REMOTE_HOST를 확인할 수 없습니다}"
 
@@ -114,13 +124,23 @@ else
 fi
 
 echo "[2/7] EC2 Instance Connect 임시 키 주입"
-aws ec2-instance-connect send-ssh-public-key \
-  --profile "${AWS_PROFILE}" \
-  --region "${AWS_REGION}" \
-  --instance-id "${INSTANCE_ID}" \
-  --availability-zone "${INSTANCE_AZ}" \
-  --instance-os-user "${REMOTE_USER}" \
-  --ssh-public-key "file://${SSH_PUBLIC_KEY}" >/dev/null
+# AWS_PROFILE이 설정된 경우에만 --profile 옵션 사용
+if [[ -n "${AWS_PROFILE:-}" ]]; then
+  aws ec2-instance-connect send-ssh-public-key \
+    --profile "${AWS_PROFILE}" \
+    --region "${AWS_REGION}" \
+    --instance-id "${INSTANCE_ID}" \
+    --availability-zone "${INSTANCE_AZ}" \
+    --instance-os-user "${REMOTE_USER}" \
+    --ssh-public-key "file://${SSH_PUBLIC_KEY}" >/dev/null
+else
+  aws ec2-instance-connect send-ssh-public-key \
+    --region "${AWS_REGION}" \
+    --instance-id "${INSTANCE_ID}" \
+    --availability-zone "${INSTANCE_AZ}" \
+    --instance-os-user "${REMOTE_USER}" \
+    --ssh-public-key "file://${SSH_PUBLIC_KEY}" >/dev/null
+fi
 
 echo "[3/7] 원격 디렉터리 준비"
 ssh -i "${SSH_KEY}" -p "${REMOTE_PORT}" -o StrictHostKeyChecking=accept-new \

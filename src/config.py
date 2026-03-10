@@ -100,16 +100,58 @@ class Settings(BaseSettings):
         return self.db_port if self.db_port != 3306 or not self.mysql_port else self.mysql_port
 
     def get_db_user(self) -> str:
-        """Get database user with priority: DB_USER (RDS/Aurora) > MYSQL_USER (로컬/레거시) > mlops."""
-        return self.db_user or self.mysql_user or "mlops"
+        """Get database user with priority: DB_USER (RDS/Aurora) > MYSQL_USER (로컬/레거시).
+        
+        운영 환경에서는 반드시 환경변수로 설정해야 합니다.
+        """
+        user = self.db_user or self.mysql_user
+        if not user:
+            import warnings
+            warnings.warn(
+                "DB_USER 또는 MYSQL_USER 환경변수가 설정되지 않았습니다. "
+                "운영 환경에서는 반드시 설정해야 합니다.",
+                UserWarning,
+                stacklevel=2,
+            )
+            # 개발 환경 호환성을 위해 임시 기본값 사용 (운영 환경에서는 설정 필수)
+            return "mlops"
+        return user
 
     def get_db_password(self) -> str:
-        """Get database password with priority: DB_PASSWORD (RDS/Aurora) > MYSQL_PASSWORD (로컬/레거시) > mlops1234."""
-        return self.db_password or self.mysql_password or "mlops1234"
+        """Get database password with priority: DB_PASSWORD (RDS/Aurora) > MYSQL_PASSWORD (로컬/레거시).
+        
+        운영 환경에서는 반드시 환경변수로 설정해야 합니다.
+        """
+        password = self.db_password or self.mysql_password
+        if not password:
+            import warnings
+            warnings.warn(
+                "DB_PASSWORD 또는 MYSQL_PASSWORD 환경변수가 설정되지 않았습니다. "
+                "운영 환경에서는 반드시 설정해야 합니다.",
+                UserWarning,
+                stacklevel=2,
+            )
+            # 개발 환경 호환성을 위해 임시 기본값 사용 (운영 환경에서는 설정 필수)
+            return "mlops1234"
+        return password
 
     def get_db_name(self) -> str:
-        """Get database name with priority: DB_NAME (RDS/Aurora) > MYSQL_DATABASE (로컬/레거시) > mlops."""
-        return self.db_name or self.mysql_database or "mlops"
+        """Get database name with priority: DB_NAME (RDS/Aurora) > MYSQL_DATABASE (로컬/레거시).
+        
+        운영 환경에서는 반드시 환경변수로 설정해야 합니다.
+        """
+        db_name = self.db_name or self.mysql_database
+        if not db_name:
+            import warnings
+            warnings.warn(
+                "DB_NAME 또는 MYSQL_DATABASE 환경변수가 설정되지 않았습니다. "
+                "운영 환경에서는 반드시 설정해야 합니다.",
+                UserWarning,
+                stacklevel=2,
+            )
+            # 개발 환경 호환성을 위해 임시 기본값 사용 (운영 환경에서는 설정 필수)
+            return "mlops"
+        return db_name
 
     def get_secondary_db_host(self) -> str:
         return self.secondary_db_host.strip()
