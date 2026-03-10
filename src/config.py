@@ -81,7 +81,7 @@ class Settings(BaseSettings):
 settings = Settings()
 
 # Korean-only 학습/추론 파이프라인에서 사용하는 로컬 경로 및 학습 하이퍼파라미터
-MAX_PAGE = 10
+MAX_PAGE = 50
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 RAW_DATA_PATH = os.path.join(BASE_DIR, "src/data/raw/movies.csv")
 RESULT_DIR = os.path.join(BASE_DIR, "src/data/result")

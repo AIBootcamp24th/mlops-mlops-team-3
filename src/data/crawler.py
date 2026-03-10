@@ -12,12 +12,15 @@ from src.data.preprocess import filter_korean_movies
 
 
 class TMDBCollector:
-    def __init__(self, api_key):
+    def __init__(self, api_key: str):
         self.api_key = api_key
         self.base_url = "https://api.themoviedb.org/3"
 
     def fetch_tmdb_data(
-        self, max_pages=MAX_PAGE, korean_only: bool = True, total_page: int | None = None
+        self,
+        max_pages: int = MAX_PAGE,
+        korean_only: bool = True,
+        total_page: int | None = None,
     ) -> pd.DataFrame:
         all_movies = []
         page_limit = total_page if total_page is not None else max_pages
@@ -39,7 +42,7 @@ class TMDBCollector:
             }
 
             try:
-                response = requests.get(discover_url, params=params)
+                response = requests.get(discover_url, params=params, timeout=30)
                 response.raise_for_status()
                 data = response.json()
                 movies = data.get("results", [])
@@ -51,6 +54,7 @@ class TMDBCollector:
                     detail = self._get_movie_details(movie["id"])
                     movie.update(detail)
                     all_movies.append(movie)
+
                 time.sleep(0.4)
 
             except requests.RequestException as e:
@@ -60,50 +64,61 @@ class TMDBCollector:
         print(f"\n- 데이터 수집 완료: 총 {len(all_movies)}개의 영화 정보")
 
         df = pd.DataFrame(all_movies)
+        if df.empty:
+            return df
+
+        self.save_to_db(df)
 
         if korean_only:
             filtered_df = filter_korean_movies(df)
             print(f"- 한국 영화 필터 적용 완료: {len(filtered_df)}개 영화\n")
-
-            if not df.empty:
-                self.save_to_db(df)
             return filtered_df
 
-        if not df.empty:
-            self.save_to_db(df)
         return df
 
-    def _get_movie_details(self, movie_id):
+    def _get_movie_details(self, movie_id: int) -> dict:
         url = f"{self.base_url}/movie/{movie_id}"
         params = {"api_key": self.api_key, "language": "ko-KR"}
 
         try:
-            response = requests.get(url, params=params)
+            response = requests.get(url, params=params, timeout=30)
             if response.status_code == 200:
                 data = response.json()
-                return {"budget": data.get("budget", 0), "runtime": data.get("runtime", 0)}
+                return {
+                    "budget": data.get("budget", 0),
+                    "runtime": data.get("runtime", 0),
+                }
         except Exception:
             pass
+
         return {"budget": 0, "runtime": 0}
 
-    def save_to_db(self, df: pd.DataFrame):
-        """영화 데이터를 DB에 저장하거나, 중복된 경우 최신 내용으로 갱신합니다."""
+    def save_to_db(self, df: pd.DataFrame) -> None:
         print(f"- {len(df)}개의 데이터를 {SQL} DB에 저장 시작")
         db = SessionLocal()
+
         try:
             query = text("""
-                INSERT INTO movies_raw 
-                (tmdb_id, title, original_title, overview, release_date, budget, runtime, vote_average, vote_count, popularity, original_language, genres)
-                VALUES 
-                (:id, :title, :original_title, :overview, :release_date, :budget, :runtime, :vote_average, :vote_count, :popularity, :original_language, :genres)
+                INSERT INTO movies_raw
+                (
+                    tmdb_id, title, original_title, overview, release_date,
+                    budget, runtime, vote_average, vote_count, popularity,
+                    original_language, genres
+                )
+                VALUES
+                (
+                    :id, :title, :original_title, :overview, :release_date,
+                    :budget, :runtime, :vote_average, :vote_count, :popularity,
+                    :original_language, :genres
+                )
                 ON DUPLICATE KEY UPDATE
-                title = VALUES(title),
-                budget = VALUES(budget),
-                runtime = VALUES(runtime),
-                vote_average = VALUES(vote_average),
-                vote_count = VALUES(vote_count),
-                popularity = VALUES(popularity),
-                overview = VALUES(overview)
+                    title = VALUES(title),
+                    budget = VALUES(budget),
+                    runtime = VALUES(runtime),
+                    vote_average = VALUES(vote_average),
+                    vote_count = VALUES(vote_count),
+                    popularity = VALUES(popularity),
+                    overview = VALUES(overview)
             """)
 
             for _, row in df.iterrows():
@@ -116,7 +131,7 @@ class TMDBCollector:
                         "overview": row.get("overview"),
                         "release_date": None
                         if pd.isna(row.get("release_date")) or row.get("release_date") == ""
-                        else row.get("release_date"),  # 날짜가 비어있거나 NaT인 경우 None으로 저장
+                        else row.get("release_date"),
                         "vote_average": row.get("vote_average"),
                         "vote_count": row.get("vote_count"),
                         "popularity": row.get("popularity"),
@@ -129,8 +144,10 @@ class TMDBCollector:
 
             db.commit()
             print(f"- {SQL} DB 저장 완료")
+
         except Exception as e:
             print(f"- {SQL} DB 저장 실패 --> {e}\n")
             db.rollback()
+
         finally:
             db.close()

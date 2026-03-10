@@ -18,4 +18,4 @@ if __name__ == "__main__":
         print("- 경고: 수집된 데이터가 없습니다.")
     else:
         print(f"- TMDB 데이터 수집 완료: 총 {len(df_raw)}개 영화 정보")
-        print(f"- DB 적재 완료: movies_raw 테이블에 저장됨")
+        print("- DB 적재 완료: movies_raw 테이블에 저장됨")

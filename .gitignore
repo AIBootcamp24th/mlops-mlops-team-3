@@ -12,7 +12,7 @@ src/model/*.pt
 src/model/*.pkl
 
 # inference outputs
-src/data/result/*.csv
+src/data/result/
 
 
 ### JupyterNotebooks ###
