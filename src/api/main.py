@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
+import asyncio
 
 import requests
 from fastapi import FastAPI, HTTPException
@@ -45,7 +46,23 @@ async def lifespan(_: FastAPI):
         import logging
         logger = logging.getLogger(__name__)
         logger.warning(f"모델 로딩 실패 (API는 계속 실행됩니다): {type(exc).__name__}: {exc}")
+    
+    # Background task for CD (Hot-reloading)
+    async def model_reloader():
+        while True:
+            await asyncio.sleep(600)  # 10분마다 체크
+            try:
+                if predictor.check_and_reload():
+                    import logging
+                    logging.getLogger(__name__).info("Model reloaded via Hot-reloading")
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).error(f"Error in model reloader: {e}")
+
+    reloader_task = asyncio.create_task(model_reloader())
+    
     yield
+    reloader_task.cancel()
 
 
 app = FastAPI(

@@ -34,6 +34,7 @@ class ModelPredictor:
         self.model = RatingRegressor(input_dim=len(self.feature_cols))
         self.scaler = StandardScaler()
         self.model_loaded = False
+        self.loaded_model_run_id = ""
 
     def load(self) -> None:
         model_path = Path(settings.api_model_local_path)
@@ -50,6 +51,40 @@ class ModelPredictor:
         model_path.parent.mkdir(parents=True, exist_ok=True)
         download_file(settings.aws_s3_model_bucket, settings.api_model_s3_key, str(model_path))
         self._load_from_local(model_path)
+        # Update run_id if loading from S3 key directly
+        if "models/" in settings.api_model_s3_key:
+            self.loaded_model_run_id = settings.api_model_s3_key.split("/")[1]
+
+    def check_and_reload(self) -> bool:
+        """Checks champion.json from S3 and reloads if a new model is available."""
+        import json
+        from tempfile import TemporaryDirectory
+        
+        with TemporaryDirectory() as tmpdir:
+            local_registry = Path(tmpdir) / "champion.json"
+            try:
+                download_file(
+                    settings.aws_s3_model_bucket, 
+                    settings.api_model_registry_key, 
+                    str(local_registry)
+                )
+                with open(local_registry, "r") as f:
+                    registry = json.load(f)
+                
+                new_run_id = registry.get("run_id")
+                new_s3_key = registry.get("s3_key")
+                
+                if new_run_id and new_run_id != self.loaded_model_run_id:
+                    print(f"- 새로운 Champion 모델 감지: {new_run_id}. 로딩 시작...")
+                    local_model_path = Path(settings.api_model_local_path)
+                    download_file(settings.aws_s3_model_bucket, new_s3_key, str(local_model_path))
+                    self._load_from_local(local_model_path)
+                    self.loaded_model_run_id = new_run_id
+                    print(f"- 새로운 모델 로드 완료: {new_run_id}")
+                    return True
+            except Exception as e:
+                print(f"- 모델 체크 중 에러 (무시됨): {e}")
+        return False
 
     def predict_one(self, features: list[float]) -> float:
         self._ensure_loaded()

@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import subprocess
 from datetime import datetime
 
 from airflow import DAG
 from airflow.datasets import Dataset
 from airflow.operators.bash import BashOperator
-from airflow.operators.python import PythonOperator
+from airflow.operators.python import PythonOperator, ShortCircuitOperator
 
 DATASET_DOCS_URL = "https://github.com/AIBootcamp24th/mlops-mlops-team-3/tree/main/mlops_project/docs"
 TRAIN_DISPATCH_DATASET = Dataset(
@@ -30,14 +31,29 @@ def validate_runtime_env() -> None:
     if missing:
         raise RuntimeError(f"필수 환경변수가 누락되었습니다: {missing}")
 
-    # AWS 자격 증명은 정적 키 대신 IAM Role(Instance Profile)도 허용한다.
     try:
         boto3.client("sts", region_name=os.getenv("AWS_REGION")).get_caller_identity()
-    except Exception as exc:  # pragma: no cover - 환경 검증 로직
+    except Exception as exc:
         raise RuntimeError(
             "AWS 자격 증명을 확인할 수 없습니다. "
             "AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY 또는 EC2 IAM Role을 확인하세요."
         ) from exc
+
+
+def check_for_data_changes() -> bool:
+    """exit 0 means change detected, exit 1 means no change."""
+    try:
+        result = subprocess.run(
+            ["python", "scripts/check_data_change.py"],
+            cwd="/opt/airflow/project",
+            capture_output=True,
+            text=True,
+        )
+        print(result.stdout)
+        return result.returncode == 0
+    except Exception as e:
+        print(f"Error checking for data changes: {e}")
+        return True  # Default to True on error to be safe
 
 
 with DAG(
@@ -49,7 +65,6 @@ with DAG(
     catchup=False,
     tags=["mlops", "train", "sqs", "wandb"],
 ) as dag:
-    # latest 고정 키 대신 Airflow 실행 시점 기반 키를 사용한다.
     train_data_s3_key = "tmdb/{{ ts_nodash }}/train.csv"
 
     env_check = PythonOperator(
@@ -62,12 +77,23 @@ with DAG(
         append_env=True,
         env={
             "PYTHONPATH": "/opt/airflow/project",
+        },
+        bash_command="cd /opt/airflow/project && python scripts/sync_tmdb_to_db.py",
+    )
+
+    check_data = ShortCircuitOperator(
+        task_id="check_data_change",
+        python_callable=check_for_data_changes,
+    )
+
+    export_s3 = BashOperator(
+        task_id="export_db_to_s3",
+        append_env=True,
+        env={
+            "PYTHONPATH": "/opt/airflow/project",
             "TRAIN_DATA_S3_KEY": train_data_s3_key,
         },
-        bash_command=(
-            "cd /opt/airflow/project && "
-            "python scripts/sync_tmdb_to_db.py"
-        ),
+        bash_command="cd /opt/airflow/project && python scripts/export_db_to_s3.py",
     )
 
     dispatch_train = BashOperator(
@@ -78,20 +104,14 @@ with DAG(
             "TRAIN_DATA_S3_KEY": train_data_s3_key,
         },
         outlets=[TRAIN_DISPATCH_DATASET],
-        bash_command=(
-            "cd /opt/airflow/project && "
-            "python scripts/send_sqs_message.py"
-        ),
+        bash_command="cd /opt/airflow/project && python scripts/send_sqs_message.py",
     )
 
     run_train_once = BashOperator(
         task_id="run_train_worker_once",
         append_env=True,
         env={"PYTHONPATH": "/opt/airflow/project"},
-        bash_command=(
-            "cd /opt/airflow/project && "
-            "python -m src.train.run_train"
-        ),
+        bash_command="cd /opt/airflow/project && python -m src.train.run_train",
     )
 
     quality_gate = BashOperator(
@@ -102,10 +122,7 @@ with DAG(
             "QUALITY_GATE_REQUIRED": "false",
             "QUALITY_GATE_MAX_RUNS": "50",
         },
-        bash_command=(
-            "cd /opt/airflow/project && "
-            "python scripts/register_model.py"
-        ),
+        bash_command="cd /opt/airflow/project && python scripts/register_model.py",
     )
 
-    env_check >> sync_tmdb_to_db >> dispatch_train >> run_train_once >> quality_gate
+    env_check >> sync_tmdb_to_db >> check_data >> export_s3 >> dispatch_train >> run_train_once >> quality_gate

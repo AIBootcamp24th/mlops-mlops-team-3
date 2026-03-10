@@ -26,10 +26,4 @@ if __name__ == "__main__":
     if df_raw.empty:
         print("- 경고: 수집된 데이터가 없습니다.")
     else:
-        print(f"- TMDB 데이터 수집 완료: 총 {len(df_raw)}개 영화 정보")
-        train_data_s3_key = os.getenv("TRAIN_DATA_S3_KEY", _default_train_data_s3_key())
-        with TemporaryDirectory() as tmpdir:
-            local_train_csv = os.path.join(tmpdir, "train.csv")
-            df_raw.to_csv(local_train_csv, index=False)
-            s3_uri = upload_file(local_train_csv, settings.aws_s3_raw_bucket, train_data_s3_key)
-            print(f"- 학습 데이터 S3 업로드 완료: {s3_uri}")
+        print(f"- TMDB 데이터 수집 및 DB 저장 완료: 총 {len(df_raw)}개 영화 정보")
