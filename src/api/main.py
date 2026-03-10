@@ -16,6 +16,7 @@ from src.api.schemas import (
     RecommendationItem,
     UserHistoryItem,
 )
+from src.api.mysql_logger import mysql_analyze_by_id_logger
 from src.api.tmdb_client import TMDBClient
 from src.constants import FEATURE_COLS
 from src.infer.predictor import ModelPredictor
@@ -172,12 +173,20 @@ def analyze_by_id(payload: AnalyzeByIdRequest) -> AnalyzeByTitleResponse:
     except requests.RequestException as exc:
         raise HTTPException(status_code=502, detail=f"TMDB 요청 실패: {exc}") from exc
 
-    return _analyze_with_base_movie(
+    response = _analyze_with_base_movie(
         base_movie=base_movie,
         query_value=str(payload.movie_id),
         top_k=payload.top_k,
         user_history_items=payload.user_history,
     )
+    mysql_analyze_by_id_logger.log(
+        query_movie_id=payload.movie_id,
+        top_k=payload.top_k,
+        user_history_count=len(payload.user_history),
+        movie=response.movie,
+        recommendations=response.recommendations,
+    )
+    return response
 
 
 def _analyze_with_base_movie(

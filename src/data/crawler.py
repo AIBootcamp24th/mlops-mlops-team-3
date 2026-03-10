@@ -65,8 +65,8 @@ class TMDBCollector:
             filtered_df = filter_korean_movies(df)
             print(f"- 한국 영화 필터 적용 완료: {len(filtered_df)}개 영화\n")
 
-            if not df.empty:
-                self.save_to_db(df)
+            if not filtered_df.empty:
+                self.save_to_db(filtered_df)
             return filtered_df
 
         if not df.empty:

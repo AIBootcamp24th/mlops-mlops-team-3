@@ -2,13 +2,20 @@ import os
 
 import pandas as pd
 from dotenv import load_dotenv
-from torch.utils.data import DataLoader
 
-from src.config import BATCH_SIZE, MAX_PAGE, RAW_DATA_PATH, RESULT_DIR
+from src.config import MAX_PAGE, PROCESSED_DATA_PATH, RAW_DATA_PATH
 from src.data.crawler import TMDBCollector
 from src.data.database import engine
-from src.data.dataset import RatingsDataset
-from src.data.preprocessor import DataPreprocessor
+from src.data.preprocessor import (
+    add_adult_feature,
+    add_date_features,
+    add_derived_features,
+    add_genre_features,
+    add_log_features,
+    fill_missing_numeric,
+    filter_data,
+    save_processed_data,
+)
 
 load_dotenv()
 
@@ -67,33 +74,17 @@ def main():
         print(f"- 에러: 필수 컬럼이 없습니다: {missing_columns}\n")
         return
 
-    df_filtered = df_raw[essential_features].copy()
+    df_processed = filter_data(df_raw.copy())
+    df_processed = add_date_features(df_processed)
+    df_processed = add_log_features(df_processed)
+    df_processed = add_derived_features(df_processed)
+    df_processed = add_adult_feature(df_processed)
+    df_processed = add_genre_features(df_processed)
+    df_processed = fill_missing_numeric(df_processed)
+    save_processed_data(df_processed)
 
-    df_filtered["runtime"] = df_filtered["runtime"].replace(0, 120).fillna(120)
-    df_filtered["budget"] = df_filtered["budget"].fillna(0)
-
-    df_filtered = df_filtered[df_filtered["vote_count"] > 0]
-
-    print(f"- 필터링 후 학습 가능 샘플 수: 총 {len(df_filtered)}개\n")
-
-    preprocessor = DataPreprocessor(df_filtered)
-    preprocessor.run()
-
-    preprocessor.save(dst_dir=RESULT_DIR, filename="rating_data")
-
-    processed_path = os.path.join(RESULT_DIR, "rating_data.csv")
-    df_ready = pd.read_csv(processed_path)
-
-    train_features = ["watch_ratio", "popularity", "runtime", "budget"]
-    target_col = "target_rating"
-
-    dataset = RatingsDataset(df_ready, feature_cols=train_features, target_col=target_col)
-    train_loader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True)
-
-    for x, y in train_loader:
-        print(f"\n- [검증] 입력(X) 형태: {x.shape}")
-        print(f"- [검증] 타겟(Y) 형태: {y.shape}\n")
-        break
+    df_ready = pd.read_csv(PROCESSED_DATA_PATH)
+    print(f"- 전처리 데이터 검증 완료: 총 {len(df_ready)}개")
 
 
 if __name__ == "__main__":
