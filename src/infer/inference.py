@@ -1,35 +1,14 @@
+from __future__ import annotations
+
 from pathlib import Path
 
-import joblib
 import numpy as np
 import pandas as pd
 import torch
-import torch.nn as nn
+from sklearn.preprocessing import StandardScaler
 
-from src.config import (
-    FEATURE_COLS_PATH,
-    INFERENCE_RESULT_PATH,
-    MODEL_PATH,
-    RAW_DATA_PATH,
-    SCALER_PATH,
-)
-
-
-class RatingMLP(nn.Module):
-    def __init__(self, input_dim: int):
-        super().__init__()
-        self.model = nn.Sequential(
-            nn.Linear(input_dim, 128),
-            nn.ReLU(),
-            nn.Linear(128, 64),
-            nn.ReLU(),
-            nn.Linear(64, 32),
-            nn.ReLU(),
-            nn.Linear(32, 1),
-        )
-
-    def forward(self, x):
-        return self.model(x)
+from src.config import INFERENCE_RESULT_PATH, MODEL_PATH, RAW_DATA_PATH
+from src.train.model import RatingRegressor
 
 
 def add_features(df: pd.DataFrame) -> pd.DataFrame:
@@ -104,12 +83,66 @@ def add_features(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def main():
+def build_scaler_from_checkpoint(
+    checkpoint: dict,
+    feature_count: int,
+) -> StandardScaler:
+    scaler = StandardScaler()
+
+    mean = np.array(checkpoint.get("scaler_mean", [0.0] * feature_count), dtype=float)
+    scale = np.array(checkpoint.get("scaler_scale", [1.0] * feature_count), dtype=float)
+    var = np.array(checkpoint.get("scaler_var", [1.0] * feature_count), dtype=float)
+
+    scaler.mean_ = mean
+    scaler.scale_ = np.where(scale == 0.0, 1.0, scale)
+    scaler.var_ = np.where(var < 1e-12, 1.0, var)
+    scaler.n_features_in_ = feature_count
+
+    return scaler
+
+
+def load_model_and_metadata(model_path: Path):
+    checkpoint = torch.load(model_path, map_location="cpu")
+
+    if checkpoint is None:
+        raise ValueError(f"- 모델 파일이 비어 있습니다: {model_path}")
+
+    if not isinstance(checkpoint, dict):
+        raise ValueError(f"- 체크포인트 형식이 올바르지 않습니다: {type(checkpoint)}")
+
+    if "model_state_dict" not in checkpoint:
+        raise ValueError("- checkpoint에 model_state_dict가 없습니다.")
+
+    feature_cols = checkpoint.get("feature_cols")
+    if not feature_cols:
+        raise ValueError("- checkpoint에 feature_cols가 없습니다.")
+
+    hidden_dims = tuple(checkpoint.get("hidden_dims", [128, 64]))
+    dropout = float(checkpoint.get("dropout", 0.2))
+
+    model = RatingRegressor(
+        input_dim=len(feature_cols),
+        hidden_dims=hidden_dims,
+        dropout=dropout,
+    )
+    model.load_state_dict(checkpoint["model_state_dict"])
+    model.eval()
+
+    scaler = build_scaler_from_checkpoint(checkpoint, len(feature_cols))
+
+    return model, scaler, feature_cols, checkpoint
+
+
+def main() -> None:
     raw_path = Path(RAW_DATA_PATH)
     model_path = Path(MODEL_PATH)
-    scaler_path = Path(SCALER_PATH)
-    feature_cols_path = Path(FEATURE_COLS_PATH)
     save_path = Path(INFERENCE_RESULT_PATH)
+
+    if not raw_path.exists():
+        raise FileNotFoundError(f"- 원본 데이터 파일이 없습니다: {raw_path}")
+
+    if not model_path.exists():
+        raise FileNotFoundError(f"- 모델 파일이 없습니다: {model_path}")
 
     df = pd.read_csv(raw_path)
     print(f"- 원본 데이터 로드 완료: {len(df)}건")
@@ -130,8 +163,7 @@ def main():
 
     df = add_features(df)
 
-    feature_cols = joblib.load(feature_cols_path)
-    scaler = joblib.load(scaler_path)
+    model, scaler, feature_cols, checkpoint = load_model_and_metadata(model_path)
 
     for col in feature_cols:
         if col not in df.columns:
@@ -141,12 +173,8 @@ def main():
     X_scaled = scaler.transform(X)
     X_tensor = torch.tensor(X_scaled, dtype=torch.float32)
 
-    model = RatingMLP(input_dim=len(feature_cols))
-    model.load_state_dict(torch.load(model_path, map_location="cpu"))
-    model.eval()
-
     with torch.no_grad():
-        preds = model(X_tensor).squeeze().numpy()
+        preds = model(X_tensor).view(-1).cpu().numpy()
 
     preds = np.clip(preds, 0, 10)
     df["predicted_rating"] = preds
@@ -157,6 +185,10 @@ def main():
     save_path.parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(save_path, index=False)
     print(f"- 추론 완료: {save_path}")
+
+    print(f"- 사용 피처 수: {len(feature_cols)}")
+    print(f"- checkpoint best_epoch: {checkpoint.get('best_epoch')}")
+    print(f"- checkpoint best_val_rmse: {checkpoint.get('best_val_rmse')}")
 
     show_cols = ["title", "release_date", "vote_average", "predicted_rating", "abs_error"]
     show_cols = [col for col in show_cols if col in df.columns]
