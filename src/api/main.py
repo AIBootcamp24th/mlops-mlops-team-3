@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 
 import requests
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
@@ -20,6 +21,7 @@ from src.api.schemas import (
 )
 from src.api.tmdb_client import TMDBClient
 from src.constants import FEATURE_COLS
+from src.config import settings
 from src.data.database import engine
 from src.infer.predictor import ModelPredictor
 from src.reco.personalized import (
@@ -62,6 +64,21 @@ app = FastAPI(
             "name": "Movie"
         },
     ],
+)
+
+
+def _parse_cors_origins(raw: str) -> list[str]:
+    if not raw.strip():
+        return ["*"]
+    return [origin.strip() for origin in raw.split(",") if origin.strip()]
+
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_parse_cors_origins(settings.api_cors_allow_origins),
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 

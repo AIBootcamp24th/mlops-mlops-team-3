@@ -19,6 +19,7 @@ CLI_REMOTE_HOST="${REMOTE_HOST-}"
 CLI_REMOTE_USER="${REMOTE_USER-}"
 CLI_REMOTE_PORT="${REMOTE_PORT-}"
 CLI_SSH_KEY="${SSH_KEY-}"
+CLI_SSH_PUBLIC_KEY="${SSH_PUBLIC_KEY-}"
 CLI_REMOTE_DIR="${REMOTE_DIR-}"
 CLI_API_PORT="${API_PORT-}"
 CLI_PRUNE_REMOTE="${PRUNE_REMOTE-}"
@@ -40,6 +41,7 @@ INSTANCE_AZ="${INSTANCE_AZ:?INSTANCE_AZ를 remote.env 또는 환경변수로 설
 REMOTE_USER="${REMOTE_USER:-ubuntu}"
 REMOTE_PORT="${REMOTE_PORT:-22}"
 SSH_KEY="${SSH_KEY:?SSH_KEY를 remote.env 또는 환경변수로 설정하세요}"
+SSH_PUBLIC_KEY="${SSH_PUBLIC_KEY:-}"
 REMOTE_DIR="${REMOTE_DIR:-/home/${REMOTE_USER}/team_mlops/mlops_project}"
 API_PORT="${API_PORT:-8000}"
 PRUNE_REMOTE="${PRUNE_REMOTE:-true}"
@@ -56,6 +58,7 @@ SKIP_BUILD="${SKIP_BUILD:-false}"
 [[ -n "${CLI_REMOTE_USER}" ]] && REMOTE_USER="${CLI_REMOTE_USER}"
 [[ -n "${CLI_REMOTE_PORT}" ]] && REMOTE_PORT="${CLI_REMOTE_PORT}"
 [[ -n "${CLI_SSH_KEY}" ]] && SSH_KEY="${CLI_SSH_KEY}"
+[[ -n "${CLI_SSH_PUBLIC_KEY}" ]] && SSH_PUBLIC_KEY="${CLI_SSH_PUBLIC_KEY}"
 [[ -n "${CLI_REMOTE_DIR}" ]] && REMOTE_DIR="${CLI_REMOTE_DIR}"
 [[ -n "${CLI_API_PORT}" ]] && API_PORT="${CLI_API_PORT}"
 [[ -n "${CLI_PRUNE_REMOTE}" ]] && PRUNE_REMOTE="${CLI_PRUNE_REMOTE}"
@@ -84,6 +87,19 @@ elif [[ "${REMOTE_DIR}" == "${HOME}"* || "${REMOTE_DIR}" == /Users/* ]]; then
   REMOTE_DIR="/home/${REMOTE_USER}/team_mlops/mlops_project"
 fi
 
+if [[ -z "${SSH_PUBLIC_KEY}" ]]; then
+  if [[ -f "${SSH_KEY}.pub" ]]; then
+    SSH_PUBLIC_KEY="${SSH_KEY}.pub"
+  else
+    SSH_PUBLIC_KEY="${HOME}/.ssh/id_rsa.pub"
+  fi
+fi
+
+if [[ ! -f "${SSH_PUBLIC_KEY}" ]]; then
+  echo "ERROR: SSH_PUBLIC_KEY 파일을 찾을 수 없습니다: ${SSH_PUBLIC_KEY}"
+  exit 1
+fi
+
 echo "=== AWS API 배포 시작 ==="
 echo "instance_id: ${INSTANCE_ID}"
 echo "remote: ${REMOTE_USER}@${REMOTE_HOST}:${REMOTE_PORT}"
@@ -104,7 +120,7 @@ aws ec2-instance-connect send-ssh-public-key \
   --instance-id "${INSTANCE_ID}" \
   --availability-zone "${INSTANCE_AZ}" \
   --instance-os-user "${REMOTE_USER}" \
-  --ssh-public-key "file://${HOME}/.ssh/id_rsa.pub" >/dev/null
+  --ssh-public-key "file://${SSH_PUBLIC_KEY}" >/dev/null
 
 echo "[3/7] 원격 디렉터리 준비"
 ssh -i "${SSH_KEY}" -p "${REMOTE_PORT}" -o StrictHostKeyChecking=accept-new \

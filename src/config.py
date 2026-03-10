@@ -38,6 +38,7 @@ class Settings(BaseSettings):
     )
     tmdb_api_key: str = Field(default="", alias="TMDB_API_KEY")
     tmdb_language: str = Field(default="ko-KR", alias="TMDB_LANGUAGE")
+    api_cors_allow_origins: str = Field(default="*", alias="API_CORS_ALLOW_ORIGINS")
 
     # Database connection variables (RDS/Aurora 우선 전략)
     # 우선순위: DB_* (RDS/Aurora 엔드포인트) > MYSQL_* (레거시/로컬 MySQL) > 기본값
