@@ -3,7 +3,16 @@
 
 wandb/
 /src/data/raw/
-/src/data/result/
+
+# processed data
+src/data/processed/
+
+# model artifacts
+src/model/*.pt
+src/model/*.pkl
+
+# inference outputs
+src/data/result/*.csv
 
 
 ### JupyterNotebooks ###

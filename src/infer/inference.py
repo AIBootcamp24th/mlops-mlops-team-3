@@ -1,113 +1,178 @@
-import os
+from pathlib import Path
 
 import joblib
 import numpy as np
 import pandas as pd
 import torch
+import torch.nn as nn
 
-from src.config import BASE_DIR, RAW_DATA_PATH, RESULT_DIR
-from src.model.network import RatingPredictor
-
-FEATURE_COLS = ["watch_ratio", "popularity", "runtime", "budget"]
-
-
-def _generate_watch_ratio(rating: float) -> float:
-    z = (rating - 5.0) / 2.0
-    ratio = 1.0 / (1.0 + np.exp(-z))
-    return float(np.clip(ratio, 0.05, 0.98))
+from src.config import (
+    FEATURE_COLS_PATH,
+    INFERENCE_RESULT_PATH,
+    MODEL_PATH,
+    RAW_DATA_PATH,
+    SCALER_PATH,
+)
 
 
-def _is_korean_movie(row: pd.Series) -> bool:
-    country_data = str(row.get("origin_country", "")).upper()
-    original_lang = str(row.get("original_language", "")).lower()
-    return ("KR" in country_data) or (original_lang == "ko")
+class RatingMLP(nn.Module):
+    def __init__(self, input_dim: int):
+        super().__init__()
+        self.model = nn.Sequential(
+            nn.Linear(input_dim, 128),
+            nn.ReLU(),
+            nn.Linear(128, 64),
+            nn.ReLU(),
+            nn.Linear(64, 32),
+            nn.ReLU(),
+            nn.Linear(32, 1),
+        )
+
+    def forward(self, x):
+        return self.model(x)
 
 
-def _build_feature_frame(df: pd.DataFrame) -> pd.DataFrame:
-    feature_df = df.copy()
+def add_features(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
 
-    feature_df["watch_ratio"] = feature_df["vote_average"].fillna(0).apply(_generate_watch_ratio)
-    feature_df["popularity"] = feature_df["popularity"].fillna(0.0).astype(float)
-    feature_df["runtime"] = feature_df["runtime"].fillna(120.0).astype(float)
-    feature_df.loc[feature_df["runtime"] <= 0, "runtime"] = 120.0
-    feature_df["budget"] = feature_df["budget"].fillna(0.0).astype(float)
+    if "release_date" in df.columns:
+        df["release_date"] = pd.to_datetime(df["release_date"], errors="coerce")
+        df["release_year"] = df["release_date"].dt.year.fillna(0).astype(int)
+        df["release_month"] = df["release_date"].dt.month.fillna(0).astype(int)
+    else:
+        df["release_year"] = 0
+        df["release_month"] = 0
 
-    feature_df["popularity"] = feature_df["popularity"].clip(upper=500)
-    feature_df["budget"] = feature_df["budget"].clip(upper=300_000_000)
+    for col in ["popularity", "runtime", "budget", "vote_count"]:
+        if col not in df.columns:
+            df[col] = 0
+        df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
 
-    return feature_df
+    df["log_popularity"] = np.log1p(df["popularity"])
+    df["log_budget"] = np.log1p(df["budget"])
+    df["log_vote_count"] = np.log1p(df["vote_count"])
+
+    current_year = pd.Timestamp.now().year
+    df["movie_age"] = current_year - df["release_year"]
+    df["movie_age"] = df["movie_age"].clip(lower=0)
+
+    runtime_safe = df["runtime"].replace(0, np.nan)
+    vote_count_safe = df["vote_count"].replace(0, np.nan)
+
+    df["budget_per_runtime"] = df["budget"] / runtime_safe
+    df["budget_per_runtime"] = df["budget_per_runtime"].replace([np.inf, -np.inf], np.nan).fillna(0)
+    df["log_budget_per_runtime"] = np.log1p(df["budget_per_runtime"])
+
+    df["popularity_per_vote"] = df["popularity"] / vote_count_safe
+    df["popularity_per_vote"] = (
+        df["popularity_per_vote"].replace([np.inf, -np.inf], np.nan).fillna(0)
+    )
+    df["log_popularity_per_vote"] = np.log1p(df["popularity_per_vote"])
+
+    if "adult" not in df.columns:
+        df["adult"] = 0
+
+    df["adult"] = (
+        df["adult"]
+        .astype(str)
+        .str.lower()
+        .map({"true": 1, "false": 0, "1": 1, "0": 0})
+        .fillna(0)
+        .astype(int)
+    )
+
+    genre_cols = [col for col in df.columns if col.startswith("genre_")]
+    valid_genre_cols = []
+
+    for col in genre_cols:
+        if col == "genre_count":
+            continue
+
+        numeric_col = pd.to_numeric(df[col], errors="coerce")
+        non_null = numeric_col.dropna()
+        unique_vals = set(non_null.unique())
+
+        if len(non_null) > 0 and unique_vals.issubset({0, 1}):
+            df[col] = numeric_col.fillna(0).astype(int)
+            valid_genre_cols.append(col)
+
+    if valid_genre_cols:
+        df["genre_count"] = df[valid_genre_cols].sum(axis=1)
+    else:
+        df["genre_count"] = 0
+
+    return df
 
 
-def load_model(device: torch.device) -> RatingPredictor:
-    model_path = os.path.join(BASE_DIR, "artifacts", "rating_model.pt")
-    if not os.path.exists(model_path):
-        raise FileNotFoundError(f"- 모델 파일이 없습니다: {model_path}")
+def main():
+    raw_path = Path(RAW_DATA_PATH)
+    model_path = Path(MODEL_PATH)
+    scaler_path = Path(SCALER_PATH)
+    feature_cols_path = Path(FEATURE_COLS_PATH)
+    save_path = Path(INFERENCE_RESULT_PATH)
 
-    model = RatingPredictor(input_dim=len(FEATURE_COLS)).to(device)
-    state_dict = torch.load(model_path, map_location=device)
-    model.load_state_dict(state_dict)
-    model.eval()
-    return model
-
-
-def run_local_inference() -> str:
-    if not os.path.exists(RAW_DATA_PATH):
-        raise FileNotFoundError(f"- 원본 데이터 파일이 없습니다: {RAW_DATA_PATH}")
-
-    os.makedirs(RESULT_DIR, exist_ok=True)
-    output_path = os.path.join(RESULT_DIR, "inference_check.csv")
-
-    df = pd.read_csv(RAW_DATA_PATH)
+    df = pd.read_csv(raw_path)
     print(f"- 원본 데이터 로드 완료: {len(df)}건")
 
-    korean_mask = df.apply(_is_korean_movie, axis=1)
-    df = df.loc[korean_mask].copy()
-    print(f"- 한국 영화 필터링 완료: {len(df)}건")
+    if "original_language" in df.columns:
+        df = df[df["original_language"] == "ko"].copy()
+        print(f"- 한국 영화 필터링 완료: {len(df)}건")
 
-    if df.empty:
-        raise ValueError("- 한국 영화 데이터가 없습니다.")
+    if "vote_count" in df.columns:
+        df["vote_count"] = pd.to_numeric(df["vote_count"], errors="coerce").fillna(0)
 
-    feature_df = _build_feature_frame(df)
+    if "vote_average" in df.columns:
+        df["vote_average"] = pd.to_numeric(df["vote_average"], errors="coerce").fillna(0)
 
-    missing_cols = [col for col in FEATURE_COLS if col not in feature_df.columns]
-    if missing_cols:
-        raise ValueError(f"- 추론에 필요한 feature가 없습니다: {missing_cols}")
+    if "vote_count" in df.columns and "vote_average" in df.columns:
+        df = df[(df["vote_count"] >= 10) & (df["vote_average"] > 0)].copy()
+        print(f"- 평가용 필터 적용 완료: {len(df)}건")
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = load_model(device)
+    df = add_features(df)
 
-    scaler_path = os.path.join(RESULT_DIR, "scaler.joblib")
-
-    if not os.path.exists(scaler_path):
-        raise FileNotFoundError(f"스케일러 파일이 없습니다: {scaler_path}")
-
+    feature_cols = joblib.load(feature_cols_path)
     scaler = joblib.load(scaler_path)
 
-    X = feature_df[FEATURE_COLS]
+    for col in feature_cols:
+        if col not in df.columns:
+            df[col] = 0
+
+    X = df[feature_cols].copy().fillna(0)
     X_scaled = scaler.transform(X)
-    X_tensor = torch.tensor(X_scaled, dtype=torch.float32).to(device)
+    X_tensor = torch.tensor(X_scaled, dtype=torch.float32)
+
+    model = RatingMLP(input_dim=len(feature_cols))
+    model.load_state_dict(torch.load(model_path, map_location="cpu"))
+    model.eval()
 
     with torch.no_grad():
-        predictions = model(X_tensor).squeeze().cpu().numpy()
+        preds = model(X_tensor).squeeze().numpy()
 
-    out_df = df.copy()
-    predictions = np.clip(predictions * 10.0, 0.0, 10.0)
-    out_df["predicted_rating"] = predictions
+    preds = np.clip(preds, 0, 10)
+    df["predicted_rating"] = preds
 
-    keep_cols = [
-        col
-        for col in ["title", "release_date", "vote_average", "predicted_rating"]
-        if col in out_df.columns
-    ]
-    out_df = out_df[keep_cols].sort_values(by="predicted_rating", ascending=False)
+    if "vote_average" in df.columns:
+        df["abs_error"] = (df["vote_average"] - df["predicted_rating"]).abs()
 
-    out_df.to_csv(output_path, index=False, encoding="utf-8-sig")
+    save_path.parent.mkdir(parents=True, exist_ok=True)
+    df.to_csv(save_path, index=False)
+    print(f"- 추론 완료: {save_path}")
 
-    print(f"- 추론 완료: {output_path}")
-    print(out_df.head(10).to_string(index=False))
+    show_cols = ["title", "release_date", "vote_average", "predicted_rating", "abs_error"]
+    show_cols = [col for col in show_cols if col in df.columns]
 
-    return output_path
+    if "abs_error" in df.columns:
+        print("\n- abs_error 가장 작은 10건")
+        print(df[show_cols].sort_values("abs_error").head(10))
+
+        print("\n- abs_error 가장 큰 10건")
+        print(df[show_cols].sort_values("abs_error", ascending=False).head(10))
+
+        print("\n- abs_error 요약")
+        print(df["abs_error"].describe())
+    else:
+        print(df[show_cols].head(10))
 
 
 if __name__ == "__main__":
-    run_local_inference()
+    main()
