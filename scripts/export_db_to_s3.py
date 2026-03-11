@@ -11,9 +11,9 @@ from src.config import settings
 def export_movies_to_s3(s3_key: str = None) -> str:
     """Queries all movies from RDS and uploads to S3 as CSV."""
     if s3_key is None:
-        s3_key = f"tmdb/{datetime.utcnow().strftime('%Y%p%dT%H%M%S')}/train.csv"
+        s3_key = f"tmdb/{datetime.utcnow().strftime('%Y%m%dT%H%M%S')}/train.csv"
         
-    print(f"- DB 데이터(movies_raw) S3 내보내기 시작")
+    print("- DB 데이터(movies_raw) S3 내보내기 시작")
     db = SessionLocal()
     try:
         query = text("SELECT * FROM movies_raw")
