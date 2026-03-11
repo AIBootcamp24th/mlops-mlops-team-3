@@ -28,16 +28,21 @@ def _resolve_champion_model_key() -> str:
 
 
 def main() -> None:
+    import os
+
     model_s3_key = _resolve_champion_model_key()
-    timestamp = datetime.utcnow().strftime("%Y%m%d-%H%M%S")
+    output_s3_key = os.getenv("OUTPUT_S3_KEY")
+    if not output_s3_key:
+        output_s3_key = f"pred/batch/{datetime.utcnow().strftime('%Y%m%d-%H%M%S')}.csv"
     payload = {
         "model_s3_key": model_s3_key,
         "input_s3_key": "tmdb/latest/infer.csv",
-        "output_s3_key": f"pred/batch/{timestamp}.csv",
+        "output_s3_key": output_s3_key,
         "feature_cols": FEATURE_COLS,
     }
     message_id = send_message(settings.infer_queue_url, payload)
     print(f"SQS infer message sent: {message_id}")
+    print(f"OUTPUT_S3_KEY={output_s3_key}")
 
 
 if __name__ == "__main__":

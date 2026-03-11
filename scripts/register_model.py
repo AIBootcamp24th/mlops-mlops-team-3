@@ -72,7 +72,7 @@ def _promote_wandb_champion_alias(api: wandb.Api, project: str, run_id: str) -> 
 
 
 def main() -> None:
-    quality_gate_required = os.getenv("QUALITY_GATE_REQUIRED", "false").lower() == "true"
+    quality_gate_required = os.getenv("QUALITY_GATE_REQUIRED", "true").lower() == "true"
     max_runs = int(os.getenv("QUALITY_GATE_MAX_RUNS", "100"))
 
     if settings.wandb_api_key:

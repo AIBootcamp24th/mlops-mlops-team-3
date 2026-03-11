@@ -46,7 +46,7 @@ services:
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
       AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}
-      AWS_PROFILE: ${AWS_PROFILE:-song.ms}
+      AWS_PROFILE: ${AWS_PROFILE:-}
       AWS_SDK_LOAD_CONFIG: "1"
       TRAIN_QUEUE_URL: ${TRAIN_QUEUE_URL:-}
       INFER_QUEUE_URL: ${INFER_QUEUE_URL:-}
@@ -54,22 +54,26 @@ services:
       WANDB_ENTITY: ${WANDB_ENTITY:-}
       QUALITY_GATE_VAL_RMSE_MAX: ${QUALITY_GATE_VAL_RMSE_MAX:-1.2}
       QUALITY_GATE_OUT_OF_RANGE_MAX: ${QUALITY_GATE_OUT_OF_RANGE_MAX:-0.05}
+      AIRFLOW_ADMIN_USERNAME: ${AIRFLOW_ADMIN_USERNAME:-admin}
+      AIRFLOW_ADMIN_PASSWORD: ${AIRFLOW_ADMIN_PASSWORD:-admin}
+      AIRFLOW_ADMIN_EMAIL: ${AIRFLOW_ADMIN_EMAIL:-admin@example.com}
       PYTHONPATH: /opt/airflow/project
     volumes: &airflow-common-volumes
       - ./airflow/dags:/opt/airflow/dags
       - ./airflow/logs:/opt/airflow/logs
       - ./:/opt/airflow/project
       - ${HOME}/.aws:/home/airflow/.aws:ro
+
     command: >
       bash -c "
       airflow db migrate &&
       airflow users create
-      --username admin
-      --password admin
+      --username $${AIRFLOW_ADMIN_USERNAME:-admin}
+      --password $${AIRFLOW_ADMIN_PASSWORD:-admin}
       --firstname mlops
       --lastname team
       --role Admin
-      --email wsc7202@gmail.com
+      --email $${AIRFLOW_ADMIN_EMAIL:-admin@example.com}
       "
 
   airflow-webserver:

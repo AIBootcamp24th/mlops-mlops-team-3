@@ -8,6 +8,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
+    app_env: str = Field(default="development", alias="APP_ENV")
     aws_region: str = Field(default="ap-northeast-2", alias="AWS_REGION")
     aws_access_key_id: str = Field(default="", alias="AWS_ACCESS_KEY_ID")
     aws_secret_access_key: str = Field(default="", alias="AWS_SECRET_ACCESS_KEY")
@@ -38,7 +39,10 @@ class Settings(BaseSettings):
     )
     tmdb_api_key: str = Field(default="", alias="TMDB_API_KEY")
     tmdb_language: str = Field(default="ko-KR", alias="TMDB_LANGUAGE")
-    api_cors_allow_origins: str = Field(default="*", alias="API_CORS_ALLOW_ORIGINS")
+    api_cors_allow_origins: str = Field(
+        default="http://localhost:3000,http://127.0.0.1:3000",
+        alias="API_CORS_ALLOW_ORIGINS",
+    )
 
     # Database connection variables (RDS/Aurora 우선 전략)
     # 우선순위: DB_* (RDS/Aurora 엔드포인트) > MYSQL_* (레거시/로컬 MySQL) > 기본값
@@ -106,14 +110,10 @@ class Settings(BaseSettings):
         """
         user = self.db_user or self.mysql_user
         if not user:
-            import warnings
-            warnings.warn(
-                "DB_USER 또는 MYSQL_USER 환경변수가 설정되지 않았습니다. "
-                "운영 환경에서는 반드시 설정해야 합니다.",
-                UserWarning,
-                stacklevel=2,
-            )
-            # 개발 환경 호환성을 위해 임시 기본값 사용 (운영 환경에서는 설정 필수)
+            if self.app_env.lower() == "production":
+                raise RuntimeError(
+                    "APP_ENV=production 에서는 DB_USER 또는 MYSQL_USER를 반드시 설정해야 합니다."
+                )
             return "mlops"
         return user
 
@@ -124,14 +124,10 @@ class Settings(BaseSettings):
         """
         password = self.db_password or self.mysql_password
         if not password:
-            import warnings
-            warnings.warn(
-                "DB_PASSWORD 또는 MYSQL_PASSWORD 환경변수가 설정되지 않았습니다. "
-                "운영 환경에서는 반드시 설정해야 합니다.",
-                UserWarning,
-                stacklevel=2,
-            )
-            # 개발 환경 호환성을 위해 임시 기본값 사용 (운영 환경에서는 설정 필수)
+            if self.app_env.lower() == "production":
+                raise RuntimeError(
+                    "APP_ENV=production 에서는 DB_PASSWORD 또는 MYSQL_PASSWORD를 반드시 설정해야 합니다."
+                )
             return "mlops1234"
         return password
 
@@ -142,14 +138,10 @@ class Settings(BaseSettings):
         """
         db_name = self.db_name or self.mysql_database
         if not db_name:
-            import warnings
-            warnings.warn(
-                "DB_NAME 또는 MYSQL_DATABASE 환경변수가 설정되지 않았습니다. "
-                "운영 환경에서는 반드시 설정해야 합니다.",
-                UserWarning,
-                stacklevel=2,
-            )
-            # 개발 환경 호환성을 위해 임시 기본값 사용 (운영 환경에서는 설정 필수)
+            if self.app_env.lower() == "production":
+                raise RuntimeError(
+                    "APP_ENV=production 에서는 DB_NAME 또는 MYSQL_DATABASE를 반드시 설정해야 합니다."
+                )
             return "mlops"
         return db_name
 

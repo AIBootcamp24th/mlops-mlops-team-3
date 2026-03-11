@@ -71,13 +71,17 @@ class ModelPredictor:
                 with open(local_registry, "r") as f:
                     registry = json.load(f)
                 
-                new_run_id = registry.get("run_id")
-                new_s3_key = registry.get("s3_key")
+                # 레지스트리 스키마 호환:
+                # - 신버전: approved_run_id + model_key (+ 선택적 model_bucket)
+                # - 구버전: run_id + s3_key
+                new_run_id = registry.get("approved_run_id") or registry.get("run_id")
+                new_s3_key = registry.get("model_key") or registry.get("s3_key")
+                model_bucket = registry.get("model_bucket") or settings.aws_s3_model_bucket
                 
-                if new_run_id and new_run_id != self.loaded_model_run_id:
+                if new_run_id and new_s3_key and new_run_id != self.loaded_model_run_id:
                     print(f"- 새로운 Champion 모델 감지: {new_run_id}. 로딩 시작...")
                     local_model_path = Path(settings.api_model_local_path)
-                    download_file(settings.aws_s3_model_bucket, new_s3_key, str(local_model_path))
+                    download_file(model_bucket, new_s3_key, str(local_model_path))
                     self._load_from_local(local_model_path)
                     self.loaded_model_run_id = new_run_id
                     print(f"- 새로운 모델 로드 완료: {new_run_id}")
