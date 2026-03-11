@@ -26,6 +26,7 @@ CLI_PRUNE_REMOTE="${PRUNE_REMOTE-}"
 CLI_LOCAL_IMAGE_TAG="${LOCAL_IMAGE_TAG-}"
 CLI_REMOTE_IMAGE_TAG="${REMOTE_IMAGE_TAG-}"
 CLI_SKIP_BUILD="${SKIP_BUILD-}"
+CLI_DEPLOY_MODE="${DEPLOY_MODE-}"
 
 if [[ -f "${PROJECT_ROOT}/remote.env" ]]; then
   set -a
@@ -49,6 +50,7 @@ PRUNE_REMOTE="${PRUNE_REMOTE:-true}"
 LOCAL_IMAGE_TAG="${LOCAL_IMAGE_TAG:-mlops_project-api:amd64}"
 REMOTE_IMAGE_TAG="${REMOTE_IMAGE_TAG:-mlops_project-api:latest}"
 SKIP_BUILD="${SKIP_BUILD:-false}"
+DEPLOY_MODE="${DEPLOY_MODE:-auto}"
 
 # remote.env 로딩 후에도 CLI/환경변수 입력값이 있으면 우선 적용
 [[ -n "${CLI_AWS_PROFILE}" ]] && AWS_PROFILE="${CLI_AWS_PROFILE}"
@@ -66,6 +68,7 @@ SKIP_BUILD="${SKIP_BUILD:-false}"
 [[ -n "${CLI_LOCAL_IMAGE_TAG}" ]] && LOCAL_IMAGE_TAG="${CLI_LOCAL_IMAGE_TAG}"
 [[ -n "${CLI_REMOTE_IMAGE_TAG}" ]] && REMOTE_IMAGE_TAG="${CLI_REMOTE_IMAGE_TAG}"
 [[ -n "${CLI_SKIP_BUILD}" ]] && SKIP_BUILD="${CLI_SKIP_BUILD}"
+[[ -n "${CLI_DEPLOY_MODE}" ]] && DEPLOY_MODE="${CLI_DEPLOY_MODE}"
 
 if [[ -z "${REMOTE_HOST:-}" ]]; then
   # AWS_PROFILE이 설정된 경우에만 --profile 옵션 사용
@@ -114,6 +117,7 @@ echo "=== AWS API 배포 시작 ==="
 echo "instance_id: ${INSTANCE_ID}"
 echo "remote: ${REMOTE_USER}@${REMOTE_HOST}:${REMOTE_PORT}"
 echo "remote_dir: ${REMOTE_DIR}"
+echo "deploy_mode(requested): ${DEPLOY_MODE}"
 echo
 
 if [[ "${SKIP_BUILD}" == "true" ]]; then
@@ -142,21 +146,48 @@ else
     --ssh-public-key "file://${SSH_PUBLIC_KEY}" >/dev/null
 fi
 
+EFFECTIVE_DEPLOY_MODE="${DEPLOY_MODE}"
+if [[ "${DEPLOY_MODE}" == "auto" ]]; then
+  if ssh -i "${SSH_KEY}" -p "${REMOTE_PORT}" -o StrictHostKeyChecking=accept-new \
+    "${REMOTE_USER}@${REMOTE_HOST}" "docker ps -a --format '{{.Names}}' | grep -qx 'mlops-api'" >/dev/null 2>&1; then
+    EFFECTIVE_DEPLOY_MODE="image-only"
+  else
+    EFFECTIVE_DEPLOY_MODE="full"
+  fi
+fi
+
+if [[ "${EFFECTIVE_DEPLOY_MODE}" != "full" && "${EFFECTIVE_DEPLOY_MODE}" != "image-only" ]]; then
+  echo "ERROR: DEPLOY_MODE는 auto|full|image-only 중 하나여야 합니다. 현재값=${DEPLOY_MODE}"
+  exit 1
+fi
+
+echo "deploy_mode(effective): ${EFFECTIVE_DEPLOY_MODE}"
+
 echo "[3/7] 원격 디렉터리 준비"
-ssh -i "${SSH_KEY}" -p "${REMOTE_PORT}" -o StrictHostKeyChecking=accept-new \
-  "${REMOTE_USER}@${REMOTE_HOST}" "mkdir -p ${REMOTE_DIR}"
+if [[ "${EFFECTIVE_DEPLOY_MODE}" == "full" ]]; then
+  ssh -i "${SSH_KEY}" -p "${REMOTE_PORT}" -o StrictHostKeyChecking=accept-new \
+    "${REMOTE_USER}@${REMOTE_HOST}" "mkdir -p ${REMOTE_DIR}"
+else
+  echo "  - image-only 모드: 원격 디렉터리 준비 생략"
+fi
 
 echo "[4/7] 프로젝트 파일 동기화"
-rsync -az --delete \
-  --exclude '.git' --exclude '.venv' --exclude '.pytest_cache' --exclude '.ruff_cache' \
-  --exclude 'wandb' --exclude 'tmp' --exclude '__pycache__' \
-  -e "ssh -i ${SSH_KEY} -p ${REMOTE_PORT} -o StrictHostKeyChecking=accept-new" \
-  "${PROJECT_ROOT}/" "${REMOTE_USER}@${REMOTE_HOST}:${REMOTE_DIR}/"
+if [[ "${EFFECTIVE_DEPLOY_MODE}" == "full" ]]; then
+  rsync -az --delete \
+    --exclude '.git' --exclude '.venv' --exclude '.pytest_cache' --exclude '.ruff_cache' \
+    --exclude 'wandb' --exclude 'tmp' --exclude '__pycache__' \
+    -e "ssh -i ${SSH_KEY} -p ${REMOTE_PORT} -o StrictHostKeyChecking=accept-new" \
+    "${PROJECT_ROOT}/" "${REMOTE_USER}@${REMOTE_HOST}:${REMOTE_DIR}/"
+else
+  echo "  - image-only 모드: 프로젝트 동기화 생략"
+fi
 
 echo "[5/7] 원격 디스크 정리(선택)"
-if [[ "${PRUNE_REMOTE}" == "true" ]]; then
+if [[ "${PRUNE_REMOTE}" == "true" && "${EFFECTIVE_DEPLOY_MODE}" == "full" ]]; then
   ssh -i "${SSH_KEY}" -p "${REMOTE_PORT}" -o StrictHostKeyChecking=accept-new \
     "${REMOTE_USER}@${REMOTE_HOST}" "docker system prune -af >/dev/null || true; docker builder prune -af >/dev/null || true"
+elif [[ "${PRUNE_REMOTE}" == "true" ]]; then
+  echo "  - image-only 모드: 디스크 정리 생략"
 fi
 
 echo "[6/7] 이미지 전송 및 API 컨테이너 재기동"

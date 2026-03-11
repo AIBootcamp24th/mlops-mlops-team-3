@@ -65,6 +65,7 @@ jobs:
           API_PORT: ${{ vars.AWS_DEPLOY_API_PORT }}
           PRUNE_REMOTE: ${{ vars.AWS_DEPLOY_PRUNE_REMOTE }}
           SKIP_BUILD: "false"
+          DEPLOY_MODE: "auto"
           SSH_KEY: .tmp/deploy_key
           SSH_PUBLIC_KEY: .tmp/deploy_key.pub
         run: |
