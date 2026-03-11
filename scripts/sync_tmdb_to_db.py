@@ -1,17 +1,9 @@
 from __future__ import annotations
 
 import os
-from datetime import datetime
-from tempfile import TemporaryDirectory
 
 from src.config import MAX_PAGE
-from src.config import settings
 from src.data.crawler import TMDBCollector
-from src.data.s3_io import upload_file
-
-
-def _default_train_data_s3_key() -> str:
-    return f"tmdb/{datetime.utcnow().strftime('%Y%m%dT%H%M%S')}/train.csv"
 
 
 if __name__ == "__main__":
