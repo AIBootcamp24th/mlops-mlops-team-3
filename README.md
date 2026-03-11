@@ -15,7 +15,6 @@
 
 - [유준우 (팀장)](https://github.com/joonwoo-yoo)
 - [송민성](https://github.com/alstjd0051)
-- [송용단](https://github.com/totalintelli)
 - [이재석](https://github.com/wotjrzm)
 
 ### 기여도
@@ -24,7 +23,6 @@
 | -------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------: |
 | [유준우 (팀장) (@joonwoo-yoo)](https://github.com/joonwoo-yoo) | ![contribution](https://img.shields.io/badge/contribution-47.62%25-1f6feb?style=for-the-badge&logo=github) |
 | [송민성 (@alstjd0051)](https://github.com/alstjd0051)          | ![contribution](https://img.shields.io/badge/contribution-52.38%25-2ea043?style=for-the-badge&logo=github) |
-| [송용단 (@totalintelli)](https://github.com/totalintelli)      |  ![contribution](https://img.shields.io/badge/contribution-0.00%25-9e9e9e?style=for-the-badge&logo=github) |
 | [이재석 (@wotjrzm)](https://github.com/wotjrzm)                |  ![contribution](https://img.shields.io/badge/contribution-0.00%25-9e9e9e?style=for-the-badge&logo=github) |
 
 <!-- contribution-table:end -->
@@ -41,7 +39,6 @@
 
 ### MLOps, AI 모델링 지원
 
-- 송용단 님
 - 송민성 님
 
 ## 4. 1차 마일스톤 (목표)
