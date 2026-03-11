@@ -17,7 +17,10 @@ jobs:
   deploy-api:
     if: >-
       ${{
-        (github.event_name == 'workflow_dispatch')
+        (
+          github.event_name == 'workflow_dispatch'
+          && github.ref == 'refs/heads/main'
+        )
         || (
           github.event_name == 'workflow_run'
           &&
@@ -26,6 +29,7 @@ jobs:
         )
       }}
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - name: Checkout merged main commit
         uses: actions/checkout@v4
@@ -138,6 +142,7 @@ jobs:
           chmod 644 .tmp/deploy_key.pub
 
       - name: Deploy API to AWS EC2
+        timeout-minutes: 20
         shell: bash
         env:
           AWS_REGION: ${{ secrets.AWS_REGION }}
@@ -150,7 +155,7 @@ jobs:
           API_PORT: ${{ env.DEPLOY_API_PORT }}
           PRUNE_REMOTE: ${{ env.DEPLOY_PRUNE_REMOTE }}
           SKIP_BUILD: "false"
-          DEPLOY_MODE: "auto"
+          DEPLOY_MODE: "image-only"
           SSH_KEY: .tmp/deploy_key
           SSH_PUBLIC_KEY: .tmp/deploy_key.pub
         run: |

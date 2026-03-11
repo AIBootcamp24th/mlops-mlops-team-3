@@ -51,6 +51,7 @@ LOCAL_IMAGE_TAG="${LOCAL_IMAGE_TAG:-mlops_project-api:amd64}"
 REMOTE_IMAGE_TAG="${REMOTE_IMAGE_TAG:-mlops_project-api:latest}"
 SKIP_BUILD="${SKIP_BUILD:-false}"
 DEPLOY_MODE="${DEPLOY_MODE:-auto}"
+NGINX_TEMPLATE_PATH="${PROJECT_ROOT}/nginx/default.conf"
 
 # remote.env 로딩 후에도 CLI/환경변수 입력값이 있으면 우선 적용
 [[ -n "${CLI_AWS_PROFILE}" ]] && AWS_PROFILE="${CLI_AWS_PROFILE}"
@@ -112,6 +113,13 @@ if [[ ! -f "${SSH_PUBLIC_KEY}" ]]; then
   echo "ERROR: SSH_PUBLIC_KEY 파일을 찾을 수 없습니다: ${SSH_PUBLIC_KEY}"
   exit 1
 fi
+
+if [[ ! -f "${NGINX_TEMPLATE_PATH}" ]]; then
+  echo "ERROR: nginx 템플릿 파일을 찾을 수 없습니다: ${NGINX_TEMPLATE_PATH}"
+  exit 1
+fi
+
+NGINX_TEMPLATE_CONTENT_ESCAPED="$(sed 's/[$`\\]/\\&/g' "${NGINX_TEMPLATE_PATH}")"
 
 echo "=== AWS API 배포 시작 ==="
 echo "instance_id: ${INSTANCE_ID}"
@@ -268,22 +276,7 @@ ssh -i "${SSH_KEY}" -p "${REMOTE_PORT}" -o StrictHostKeyChecking=accept-new \
     fi
 
     cat > \"\${NGINX_CONF_PATH}\" <<'EOF'
-server {
-  listen 80;
-  server_name _;
-
-  location / {
-    proxy_http_version 1.1;
-    proxy_set_header Host \$host;
-    proxy_set_header X-Real-IP \$remote_addr;
-    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto \$scheme;
-    proxy_connect_timeout 3s;
-    proxy_send_timeout 30s;
-    proxy_read_timeout 30s;
-    proxy_pass http://REPLACE_UPSTREAM:8000;
-  }
-}
+${NGINX_TEMPLATE_CONTENT_ESCAPED}
 EOF
     sed -i \"s/REPLACE_UPSTREAM/\${NEXT_NAME}/g\" \"\${NGINX_CONF_PATH}\"
 

@@ -119,7 +119,45 @@ graph LR
 5. **AWS 배포 Flow**
    - 현재 운영 배포는 `scripts/deploy_api_aws.sh` 기반 수동 배포를 사용합니다.
    - 배포 스크립트가 `linux/amd64` 이미지 빌드(또는 `SKIP_BUILD=true` 재사용) 후 EC2로 전송/기동하고 `/health`로 배포 검증합니다.
+   - API 컨테이너는 블루/그린(`mlops-api-blue`, `mlops-api-green`) 방식으로 교체되고, Nginx 프록시(`mlops-api-proxy`)는 새 컨테이너로 업스트림을 전환합니다.
    - 배포 후 Nginx(80/443)와 Certbot TLS 인증서를 통해 `https://dongsol.com` 경로를 서비스 엔드포인트로 고정합니다.
+
+### AWS 블루/그린 무중단 배포 과정 (EC2 + Docker + Nginx)
+
+1. **빌드/전송 준비**
+   - `docker buildx build --platform linux/amd64`로 API 이미지를 빌드합니다.
+   - EC2 Instance Connect로 임시 SSH 공개키를 주입하고, 배포 대상 인스턴스 연결을 준비합니다.
+2. **이미지 전송**
+   - 로컬 이미지를 `docker save`로 스트리밍하여 원격 EC2의 `docker load`로 적재합니다.
+   - 원격에서 배포용 태그(`mlops_project-api:latest`)를 최신 이미지로 갱신합니다.
+3. **다음 슬롯(blue/green) 기동**
+   - 현재 활성 슬롯을 감지하고 반대 슬롯(`next`) 컨테이너를 새 이미지로 기동합니다.
+   - `--env-file .env/.env.secrets`를 주입해 운영 설정을 유지합니다.
+4. **사전 헬스체크**
+   - Docker network 내부에서 `http://<next>:8000/health`를 반복 확인해 `200` 응답을 검증합니다.
+   - 헬스체크 실패 시 즉시 배포를 중단하고 기존 활성 슬롯은 유지합니다.
+5. **프록시 전환 (Cutover)**
+   - `nginx/default.conf` 템플릿의 `REPLACE_UPSTREAM`을 `next` 컨테이너명으로 치환합니다.
+   - `mlops-api-proxy` 컨테이너에서 `nginx -t` 후 `nginx -s reload`로 업스트림을 전환합니다.
+6. **정리/사후 검증**
+   - 이전 활성 슬롯 컨테이너를 제거해 리소스를 회수합니다.
+   - 외부 엔드포인트 `http://<EC2_PUBLIC_IP>:<API_PORT>/health`를 최종 확인합니다.
+
+```mermaid
+graph LR
+  A[GitHub Actions or Manual Trigger] --> B[Build linux amd64 Docker image]
+  B --> C[Inject EC2 Instance Connect SSH key]
+  C --> D[Stream image docker save to docker load]
+  D --> E[Detect active slot blue or green]
+  E --> F[Run next slot container with new image]
+  F --> G[Internal health check on next slot]
+  G -->|fail| H[Abort deploy and keep current active slot]
+  G -->|pass| I[Render nginx upstream to next slot]
+  I --> J[nginx -t and reload on proxy container]
+  J --> K[Traffic switched with zero downtime]
+  K --> L[Remove old slot container]
+  L --> M[External health check complete]
+```
 
 ### 기술 스택 역할
 
