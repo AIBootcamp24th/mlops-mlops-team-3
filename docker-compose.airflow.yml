@@ -68,6 +68,7 @@ services:
 
     command: >
       bash -c "
+      pip install --no-cache-dir 'pymysql>=1.1.0' &&
       airflow db migrate &&
       airflow users create
       --username $${AIRFLOW_ADMIN_USERNAME:-admin}
@@ -89,7 +90,11 @@ services:
       - .env.secrets
     environment: *airflow-common-env
     volumes: *airflow-common-volumes
-    command: webserver
+    command: >
+      bash -c "
+      pip install --no-cache-dir 'pymysql>=1.1.0' &&
+      airflow webserver
+      "
     ports:
       - "8085:8080"
     restart: unless-stopped
@@ -105,7 +110,11 @@ services:
       - .env.secrets
     environment: *airflow-common-env
     volumes: *airflow-common-volumes
-    command: scheduler
+    command: >
+      bash -c "
+      pip install --no-cache-dir 'pymysql>=1.1.0' &&
+      airflow scheduler
+      "
     restart: unless-stopped
 
 volumes:
