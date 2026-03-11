@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: write
+  pull-requests: write
 
 jobs:
   update-contribution:
@@ -46,5 +47,23 @@ jobs:
           git commit -m "문서: main 브랜치 기준 기여도 자동 갱신"
           git push -f origin "$BRANCH"
           echo "브랜치 푸시 완료: $BRANCH"
-          echo "수동 PR 생성: https://github.com/${{ github.repository }}/pull/new/$BRANCH"
+          echo "PR 링크: https://github.com/${{ github.repository }}/pull/new/$BRANCH"
+
+      - name: Create or update PR
+        if: steps.readme-changes.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          BRANCH="bot/update-contribution-readme"
+          TITLE="문서: main 브랜치 기여도 자동 갱신"
+          BODY=$'## 변경 내용\n- README 기여도 표를 main 기준으로 자동 갱신\n\n## 비고\n- 이 PR은 GitHub Actions가 자동 생성/갱신합니다.'
+
+          PR_NUMBER="$(gh pr list --head "$BRANCH" --base main --state open --json number --jq '.[0].number')"
+          if [ -n "$PR_NUMBER" ] && [ "$PR_NUMBER" != "null" ]; then
+            gh pr edit "$PR_NUMBER" --title "$TITLE" --body "$BODY"
+            echo "기존 PR 갱신 완료: #$PR_NUMBER"
+          else
+            gh pr create --base main --head "$BRANCH" --title "$TITLE" --body "$BODY"
+            echo "새 PR 생성 완료"
+          fi
 
