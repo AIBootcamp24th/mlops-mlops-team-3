@@ -190,21 +190,115 @@ elif [[ "${PRUNE_REMOTE}" == "true" ]]; then
   echo "  - image-only 모드: 디스크 정리 생략"
 fi
 
-echo "[6/7] 이미지 전송 및 API 컨테이너 재기동"
+echo "[6/7] 이미지 전송"
 docker save "${LOCAL_IMAGE_TAG}" | ssh -i "${SSH_KEY}" -p "${REMOTE_PORT}" -o StrictHostKeyChecking=accept-new \
   "${REMOTE_USER}@${REMOTE_HOST}" "
-    docker rm -f mlops-api >/dev/null 2>&1 || true &&
     docker image rm -f ${REMOTE_IMAGE_TAG} >/dev/null 2>&1 || true &&
     docker load &&
-    docker tag ${LOCAL_IMAGE_TAG} ${REMOTE_IMAGE_TAG} &&
-    docker run -d --name mlops-api --restart unless-stopped -p ${API_PORT}:8000 \
-      --env-file ${REMOTE_DIR}/.env \
-      --env-file ${REMOTE_DIR}/.env.secrets \
-      ${REMOTE_IMAGE_TAG} \
-      uv run uvicorn src.api.main:app --host 0.0.0.0 --port 8000
+    docker tag ${LOCAL_IMAGE_TAG} ${REMOTE_IMAGE_TAG}
   "
 
-echo "[7/7] 배포 후 헬스체크"
+echo "[7/8] 원격 블루/그린 배포 + 프록시 전환"
+ssh -i "${SSH_KEY}" -p "${REMOTE_PORT}" -o StrictHostKeyChecking=accept-new \
+  "${REMOTE_USER}@${REMOTE_HOST}" "
+    set -euo pipefail
+
+    NETWORK_NAME='mlops-api-net'
+    PROXY_NAME='mlops-api-proxy'
+    BLUE_NAME='mlops-api-blue'
+    GREEN_NAME='mlops-api-green'
+    LEGACY_NAME='mlops-api'
+    NGINX_DIR='${REMOTE_DIR}/nginx'
+    NGINX_CONF_PATH='${REMOTE_DIR}/nginx/default.conf'
+
+    mkdir -p \"\${NGINX_DIR}\"
+
+    docker network inspect \"\${NETWORK_NAME}\" >/dev/null 2>&1 || docker network create \"\${NETWORK_NAME}\" >/dev/null
+
+    if docker ps --format '{{.Names}}' | grep -qx \"\${BLUE_NAME}\"; then
+      ACTIVE_COLOR='blue'
+      ACTIVE_NAME=\"\${BLUE_NAME}\"
+      NEXT_COLOR='green'
+      NEXT_NAME=\"\${GREEN_NAME}\"
+    elif docker ps --format '{{.Names}}' | grep -qx \"\${GREEN_NAME}\"; then
+      ACTIVE_COLOR='green'
+      ACTIVE_NAME=\"\${GREEN_NAME}\"
+      NEXT_COLOR='blue'
+      NEXT_NAME=\"\${BLUE_NAME}\"
+    else
+      ACTIVE_COLOR='none'
+      ACTIVE_NAME=''
+      NEXT_COLOR='blue'
+      NEXT_NAME=\"\${BLUE_NAME}\"
+    fi
+
+    echo \"active_color=\${ACTIVE_COLOR}, next_color=\${NEXT_COLOR}\"
+
+    docker rm -f \"\${NEXT_NAME}\" >/dev/null 2>&1 || true
+    docker run -d --name \"\${NEXT_NAME}\" --restart unless-stopped --network \"\${NETWORK_NAME}\" \
+      --env-file '${REMOTE_DIR}/.env' \
+      --env-file '${REMOTE_DIR}/.env.secrets' \
+      '${REMOTE_IMAGE_TAG}' \
+      uv run uvicorn src.api.main:app --host 0.0.0.0 --port 8000 >/dev/null
+
+    NEXT_HEALTH_CODE=''
+    for i in 1 2 3 4 5 6; do
+      NEXT_HEALTH_CODE=\"\$(docker run --rm --network \"\${NETWORK_NAME}\" curlimages/curl:8.10.1 -s -o /dev/null -w '%{http_code}' \"http://\${NEXT_NAME}:8000/health\" || true)\"
+      echo \"  next_container_health try=\${i} code=\${NEXT_HEALTH_CODE}\"
+      if [[ \"\${NEXT_HEALTH_CODE}\" == '200' ]]; then
+        break
+      fi
+      sleep 2
+    done
+
+    if [[ \"\${NEXT_HEALTH_CODE}\" != '200' ]]; then
+      echo 'ERROR: 새 컨테이너 헬스체크 실패'
+      docker logs --tail 120 \"\${NEXT_NAME}\" || true
+      exit 1
+    fi
+
+    cat > \"\${NGINX_CONF_PATH}\" <<'EOF'
+server {
+  listen 80;
+  server_name _;
+
+  location / {
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_connect_timeout 3s;
+    proxy_send_timeout 30s;
+    proxy_read_timeout 30s;
+    proxy_pass http://REPLACE_UPSTREAM:8000;
+  }
+}
+EOF
+    sed -i \"s/REPLACE_UPSTREAM/\${NEXT_NAME}/g\" \"\${NGINX_CONF_PATH}\"
+
+    if docker ps -a --format '{{.Names}}' | grep -qx \"\${PROXY_NAME}\"; then
+      docker start \"\${PROXY_NAME}\" >/dev/null 2>&1 || true
+      docker exec \"\${PROXY_NAME}\" nginx -t
+      docker exec \"\${PROXY_NAME}\" nginx -s reload
+    else
+      docker run -d --name \"\${PROXY_NAME}\" --restart unless-stopped \
+        --network \"\${NETWORK_NAME}\" \
+        -p '${API_PORT}:80' \
+        -v \"\${NGINX_CONF_PATH}:/etc/nginx/conf.d/default.conf:ro\" \
+        nginx:1.27-alpine >/dev/null
+      docker exec \"\${PROXY_NAME}\" nginx -t
+    fi
+
+    if [[ \"\${ACTIVE_COLOR}\" != 'none' && \"\${ACTIVE_NAME}\" != \"\${NEXT_NAME}\" ]]; then
+      docker rm -f \"\${ACTIVE_NAME}\" >/dev/null 2>&1 || true
+    fi
+
+    # 과거 단일 컨테이너 배포 흔적이 남아 있으면 정리
+    docker rm -f \"\${LEGACY_NAME}\" >/dev/null 2>&1 || true
+  "
+
+echo "[8/8] 배포 후 헬스체크"
 for i in 1 2 3 4 5 6; do
   code="$(curl -s -o /tmp/mlops_api_health.json -w "%{http_code}" "http://${REMOTE_HOST}:${API_PORT}/health" || true)"
   echo "  try=${i} code=${code}"
