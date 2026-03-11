@@ -81,13 +81,18 @@ graph LR
   inferQueue --> inferWorker[run_infer_worker]
   inferWorker --> s3Pred[S3 pred output]
 
-  apiRequest[Client Request analyze] --> apiService[FastAPI API]
+  apiRequest[Client Browser Request] --> domain[dongsol.com]
+  domain --> dnsA[Gabia DNS A Record]
+  dnsA --> nginxProxy[Nginx Reverse Proxy EC2 80/443]
+  nginxProxy --> apiService[FastAPI API Container 8000]
   apiService -- "Hot-reloading Task" --> modelLoad[S3 champion model load]
   modelLoad --> tmdbLookup[TMDB lookup]
   apiService --> dbLog[RDS Aurora MySQL logging]
 
-  deployScript[deploy_api_aws.sh] --> amd64Build[Build linux amd64 image]
+  deployScript[Manual deploy_api_aws.sh] --> amd64Build[Build linux amd64 image]
   amd64Build --> ec2Deploy[EC2 deploy + health check]
+  ec2Deploy --> nginxRoute[Nginx route slash to slashdocs]
+  nginxRoute --> tls[Certbot TLS dongsol.com www]
 
   failureSignal[Failure Queue Backlog] --> slackAlert[Slack Alert]
 ```
@@ -111,11 +116,15 @@ graph LR
    - 큐가 비어 있는 경우 워커는 종료하지 않고 대기 후 재폴링합니다.
 
 4. **API 서비스 Flow**
+   - 클라이언트는 `dongsol.com`으로 진입하고, Nginx 리버스 프록시를 통해 API 컨테이너(`:8000`)로 라우팅됩니다.
+   - `/` 루트는 `/docs`(Swagger UI)로 리다이렉트되며, API 엔드포인트(`/analyze`, `/analyze/id`, `/health`)는 백엔드로 프록시됩니다.
    - `/analyze`, `/analyze/id` 요청이 들어오면 API가 모델을 로드해 예측을 계산하고 추천 결과를 반환합니다.
    - 요청/응답 메타 로그는 RDS/Aurora(MySQL 호환) 경로로 비차단 저장됩니다.
 
 5. **AWS 배포 Flow**
-   - `scripts/deploy_api_aws.sh`가 `linux/amd64` 이미지 빌드(또는 `SKIP_BUILD=true` 재사용) 후 EC2로 전송/기동하고 `/health`로 배포 검증합니다.
+   - 현재 운영 배포는 `scripts/deploy_api_aws.sh` 기반 수동 배포를 사용합니다.
+   - 배포 스크립트가 `linux/amd64` 이미지 빌드(또는 `SKIP_BUILD=true` 재사용) 후 EC2로 전송/기동하고 `/health`로 배포 검증합니다.
+   - 배포 후 Nginx(80/443)와 Certbot TLS 인증서를 통해 `https://dongsol.com` 경로를 서비스 엔드포인트로 고정합니다.
 
 ### 기술 스택 역할
 
