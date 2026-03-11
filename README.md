@@ -17,15 +17,13 @@
 - [송민성](https://github.com/alstjd0051)
 - [이재석](https://github.com/wotjrzm)
 
-### 기여도
+### 기여도 (수동 관리)
 
-| 팀원 (이름 + GitHub)                                           |                                                                                                     기여도 |
-| -------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------: |
-| [유준우 (팀장) (@joonwoo-yoo)](https://github.com/joonwoo-yoo) | ![contribution](https://img.shields.io/badge/contribution-47.62%25-1f6feb?style=for-the-badge&logo=github) |
-| [송민성 (@alstjd0051)](https://github.com/alstjd0051)          | ![contribution](https://img.shields.io/badge/contribution-52.38%25-2ea043?style=for-the-badge&logo=github) |
-| [이재석 (@wotjrzm)](https://github.com/wotjrzm)                |  ![contribution](https://img.shields.io/badge/contribution-0.00%25-9e9e9e?style=for-the-badge&logo=github) |
-
-<!-- contribution-table:end -->
+| 팀원 (이름 + GitHub)                                           | 기여도 |
+| -------------------------------------------------------------- | -----: |
+| [유준우 (팀장) (@joonwoo-yoo)](https://github.com/joonwoo-yoo) | 37.50% |
+| [송민성 (@alstjd0051)](https://github.com/alstjd0051)          | 61.36% |
+| [이재석 (@wotjrzm)](https://github.com/wotjrzm)                |  1.14% |
 
 ## 3. 업무 분담
 
