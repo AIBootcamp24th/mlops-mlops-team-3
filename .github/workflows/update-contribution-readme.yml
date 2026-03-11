@@ -51,19 +51,53 @@ jobs:
 
       - name: Create or update PR
         if: steps.readme-changes.outputs.changed == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
           BRANCH="bot/update-contribution-readme"
           TITLE="문서: main 브랜치 기여도 자동 갱신"
           BODY=$'## 변경 내용\n- README 기여도 표를 main 기준으로 자동 갱신\n\n## 비고\n- 이 PR은 GitHub Actions가 자동 생성/갱신합니다.'
+          PR_LINK="https://github.com/${{ github.repository }}/pull/new/$BRANCH"
 
-          PR_NUMBER="$(gh pr list --head "$BRANCH" --base main --state open --json number --jq '.[0].number')"
-          if [ -n "$PR_NUMBER" ] && [ "$PR_NUMBER" != "null" ]; then
-            gh pr edit "$PR_NUMBER" --title "$TITLE" --body "$BODY"
-            echo "기존 PR 갱신 완료: #$PR_NUMBER"
+          # 우선순위: PAT 시크릿(BOT_GH_TOKEN) -> 기본 GITHUB_TOKEN
+          if [ -n "${{ secrets.BOT_GH_TOKEN }}" ]; then
+            export GH_TOKEN="${{ secrets.BOT_GH_TOKEN }}"
+            echo "BOT_GH_TOKEN 사용"
           else
+            export GH_TOKEN="${{ github.token }}"
+            echo "GITHUB_TOKEN 사용"
+          fi
+
+          set +e
+          PR_NUMBER="$(gh pr list --head "$BRANCH" --base main --state open --json number --jq '.[0].number' 2>/tmp/gh_pr_list_err.log)"
+          LIST_EXIT_CODE=$?
+          set -e
+          if [ $LIST_EXIT_CODE -ne 0 ]; then
+            echo "PR 조회 실패: $(cat /tmp/gh_pr_list_err.log)"
+            echo "수동 PR 생성 필요: $PR_LINK"
+            exit 0
+          fi
+
+          if [ -n "$PR_NUMBER" ] && [ "$PR_NUMBER" != "null" ]; then
+            set +e
+            gh pr edit "$PR_NUMBER" --title "$TITLE" --body "$BODY"
+            EDIT_EXIT_CODE=$?
+            set -e
+            if [ $EDIT_EXIT_CODE -ne 0 ]; then
+              echo "기존 PR 갱신 실패. 수동 확인 필요: $PR_LINK"
+              exit 0
+            fi
+            echo "기존 PR 갱신 완료: #$PR_NUMBER / $PR_LINK"
+          else
+            set +e
             gh pr create --base main --head "$BRANCH" --title "$TITLE" --body "$BODY"
-            echo "새 PR 생성 완료"
+            CREATE_EXIT_CODE=$?
+            set -e
+            if [ $CREATE_EXIT_CODE -ne 0 ]; then
+              echo "자동 PR 생성이 차단되었습니다. 저장소 Settings > Actions에서"
+              echo "'Allow GitHub Actions to create and approve pull requests' 활성화 후 재시도해주세요."
+              echo "또는 BOT_GH_TOKEN 시크릿(PAT, repo 권한) 추가 후 재시도 가능합니다."
+              echo "수동 PR 생성 링크: $PR_LINK"
+              exit 0
+            fi
+            echo "새 PR 생성 완료: $PR_LINK"
           fi
 
