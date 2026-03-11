@@ -1,78 +1,160 @@
-import os
-import random
+from pathlib import Path
 
-import joblib
 import numpy as np
 import pandas as pd
-from sklearn.preprocessing import MinMaxScaler
 
-from src.config import RESULT_DIR
+from src.config import PROCESSED_DATA_PATH, RAW_DATA_PATH
 
 
-class DataPreprocessor:
-    def __init__(self, movies_df, user_count=200, max_selected_count=20):
-        random.seed(42)
-        np.random.seed(42)
-        self._movies = movies_df.copy()
-        self._users = list(range(1, user_count + 1))
-        self._max_selected_movies = max_selected_count
-        self._max_runtime_seconds = 120 * 60
-        self._features = pd.DataFrame()
-        self.scaler = MinMaxScaler()
-        self.target_cols = ["watch_ratio", "popularity", "runtime", "budget"]
+def load_raw_data() -> pd.DataFrame:
+    df = pd.read_csv(RAW_DATA_PATH)
+    print(f"- 원본 데이터 로드 완료: {len(df)}건")
+    return df
 
-    def _generate_watch_ratio(self, rating):
-        z = (rating - 5) / 2
-        ratio = 1 / (1 + np.exp(-z))
 
-        noise = np.random.normal(0, 0.05)
-        return np.clip(ratio + noise, 0.05, 0.98)
+def filter_data(df: pd.DataFrame) -> pd.DataFrame:
+    if "vote_count" in df.columns:
+        df["vote_count"] = pd.to_numeric(df["vote_count"], errors="coerce").fillna(0)
 
-    def run(self):
-        all_logs = []
-        movie_records = self._movies.to_dict(orient="records")
+    if "vote_average" in df.columns:
+        df["vote_average"] = pd.to_numeric(df["vote_average"], errors="coerce").fillna(0)
 
-        for user_id in self._users:
-            select_count = random.randint(1, self._max_selected_movies)
-            selected_movies = random.sample(movie_records, k=min(select_count, len(self._movies)))
+    df = df[df["vote_count"] >= 10].copy()
+    df = df[df["vote_average"] > 0].copy()
 
-            for movie in selected_movies:
-                watch_ratio = self._generate_watch_ratio(movie["vote_average"])
+    print(f"- 필터링 후 데이터 수: {len(df)}건")
+    return df
 
-                target_rating = movie["vote_average"] / 10.0
 
-                all_logs.append(
-                    {
-                        "user_id": str(user_id),
-                        "movie_id": str(movie["id"]),
-                        "watch_ratio": watch_ratio,
-                        "rating": movie["vote_average"],
-                        "popularity": movie["popularity"],
-                        "runtime": movie.get("runtime", 120),
-                        "budget": movie.get("budget", 0),
-                        "target_rating": target_rating,
-                    }
-                )
-        self._features = pd.DataFrame(all_logs)
+def add_date_features(df: pd.DataFrame) -> pd.DataFrame:
+    if "release_date" in df.columns:
+        df["release_date"] = pd.to_datetime(df["release_date"], errors="coerce")
+        df["release_year"] = df["release_date"].dt.year.fillna(0).astype(int)
+        df["release_month"] = df["release_date"].dt.month.fillna(0).astype(int)
+    else:
+        df["release_year"] = 0
+        df["release_month"] = 0
 
-        high_quality = self._features[self._features["rating"] >= 7.5]
-        if not high_quality.empty:
-            self._features = pd.concat(
-                [self._features, pd.concat([high_quality] * 20)], ignore_index=True
-            )
+    return df
 
-        self._features = self._features.sample(frac=1).reset_index(drop=True)
-        self._features[self.target_cols] = self.scaler.fit_transform(
-            self._features[self.target_cols]
-        )
 
-    def save(self, dst_dir=RESULT_DIR, filename="rating_prediction_log"):
-        os.makedirs(dst_dir, exist_ok=True)
+def add_log_features(df: pd.DataFrame) -> pd.DataFrame:
+    for col in ["popularity", "runtime", "budget", "vote_count"]:
+        if col not in df.columns:
+            df[col] = 0
+        df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
 
-        csv_path = os.path.join(dst_dir, f"{filename}.csv")
-        self._features.to_csv(csv_path, index=False, encoding="utf-8-sig")
+    df["log_popularity"] = np.log1p(df["popularity"])
+    df["log_budget"] = np.log1p(df["budget"])
+    df["log_vote_count"] = np.log1p(df["vote_count"])
 
-        scaler_path = os.path.join(dst_dir, "scaler.joblib")
-        joblib.dump(self.scaler, scaler_path)
+    return df
 
-        print(f"- 스케일러 적용된 데이터 저장 완료: {dst_dir}")
+def add_derived_features(df: pd.DataFrame) -> pd.DataFrame:
+    current_year = pd.Timestamp.now().year
+
+    df["movie_age"] = current_year - df["release_year"]
+    df["movie_age"] = df["movie_age"].clip(lower=0)
+
+    runtime_safe = df["runtime"].replace(0, np.nan)
+    vote_count_safe = df["vote_count"].replace(0, np.nan)
+
+    df["budget_per_runtime"] = df["budget"] / runtime_safe
+    df["budget_per_runtime"] = df["budget_per_runtime"].replace([np.inf, -np.inf], np.nan).fillna(0)
+    df["log_budget_per_runtime"] = np.log1p(df["budget_per_runtime"])
+
+    df["popularity_per_vote"] = df["popularity"] / vote_count_safe
+    df["popularity_per_vote"] = (
+        df["popularity_per_vote"].replace([np.inf, -np.inf], np.nan).fillna(0)
+    )
+    df["log_popularity_per_vote"] = np.log1p(df["popularity_per_vote"])
+
+    return df
+
+
+def add_adult_feature(df: pd.DataFrame) -> pd.DataFrame:
+    if "adult" not in df.columns:
+        df["adult"] = 0
+
+    df["adult"] = (
+        df["adult"]
+        .astype(str)
+        .str.lower()
+        .map({"true": 1, "false": 0, "1": 1, "0": 0})
+        .fillna(0)
+        .astype(int)
+    )
+    return df
+
+
+def add_genre_features(df: pd.DataFrame) -> pd.DataFrame:
+    genre_cols = [col for col in df.columns if col.startswith("genre_")]
+    valid_genre_cols = []
+
+    for col in genre_cols:
+        if col == "genre_count":
+            continue
+
+        numeric_col = pd.to_numeric(df[col], errors="coerce")
+        non_null = numeric_col.dropna()
+        unique_vals = set(non_null.unique())
+
+        if len(non_null) > 0 and unique_vals.issubset({0, 1}):
+            df[col] = numeric_col.fillna(0).astype(int)
+            valid_genre_cols.append(col)
+
+    if valid_genre_cols:
+        df["genre_count"] = df[valid_genre_cols].sum(axis=1)
+    else:
+        df["genre_count"] = 0
+
+    return df
+
+
+def fill_missing_numeric(df: pd.DataFrame) -> pd.DataFrame:
+    numeric_cols = [
+        "popularity",
+        "runtime",
+        "budget",
+        "vote_count",
+        "release_year",
+        "release_month",
+        "log_popularity",
+        "log_budget",
+        "log_vote_count",
+        "movie_age",
+        "budget_per_runtime",
+        "log_budget_per_runtime",
+        "popularity_per_vote",
+        "log_popularity_per_vote",
+        "adult",
+        "genre_count",
+    ]
+
+    for col in numeric_cols:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
+
+    return df
+
+
+def save_processed_data(df: pd.DataFrame) -> None:
+    Path(PROCESSED_DATA_PATH).parent.mkdir(parents=True, exist_ok=True)
+    df.to_csv(PROCESSED_DATA_PATH, index=False)
+    print(f"- 전처리 완료: {PROCESSED_DATA_PATH}")
+
+
+def main():
+    df = load_raw_data()
+    df = filter_data(df)
+    df = add_date_features(df)
+    df = add_log_features(df)
+    df = add_derived_features(df)
+    df = add_adult_feature(df)
+    df = add_genre_features(df)
+    df = fill_missing_numeric(df)
+    save_processed_data(df)
+
+
+if __name__ == "__main__":
+    main()

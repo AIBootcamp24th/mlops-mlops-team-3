@@ -166,7 +166,6 @@ class Settings(BaseSettings):
         except OSError:
             return False
 
-
 settings = Settings()
 
 # Korean-only 학습/추론 파이프라인에서 사용하는 로컬 경로 및 학습 하이퍼파라미터
@@ -174,6 +173,12 @@ MAX_PAGE = 10
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 RAW_DATA_PATH = os.path.join(BASE_DIR, "src/data/raw/movies.csv")
 RESULT_DIR = os.path.join(BASE_DIR, "src/data/result")
+MODEL_DIR = os.path.join(BASE_DIR, "src/model")
+MODEL_PATH = os.path.join(MODEL_DIR, "rating_model.pt")
+SCALER_PATH = os.path.join(MODEL_DIR, "scaler.pkl")
+FEATURE_COLS_PATH = os.path.join(MODEL_DIR, "feature_cols.pkl")
+PROCESSED_DATA_PATH = os.path.join(BASE_DIR, "src/data/processed/rating_data.csv")
+INFERENCE_RESULT_PATH = os.path.join(RESULT_DIR, "inference_check.csv")
 
 EPOCHS = 300
 LR = 0.001

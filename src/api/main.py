@@ -352,7 +352,7 @@ def analyze_by_id(payload: AnalyzeByIdRequest) -> AnalyzeByTitleResponse:
         except requests.RequestException as exc:
             raise HTTPException(status_code=502, detail=f"TMDB 요청 실패: {exc}") from exc
 
-    result = _analyze_with_base_movie(
+    response = _analyze_with_base_movie(
         base_movie=base_movie,
         query_value=str(payload.movie_id),
         top_k=payload.top_k,
@@ -362,10 +362,10 @@ def analyze_by_id(payload: AnalyzeByIdRequest) -> AnalyzeByTitleResponse:
         query_movie_id=payload.movie_id,
         top_k=payload.top_k,
         user_history_count=len(payload.user_history),
-        movie=result.movie,
-        recommendations=result.recommendations,
+        movie=response.movie,
+        recommendations=response.recommendations,
     )
-    return result
+    return response
 
 
 def _analyze_with_base_movie(

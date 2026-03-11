@@ -1,142 +1,178 @@
-import os
-import sys
+from pathlib import Path
 
 import joblib
 import numpy as np
 import pandas as pd
 import torch
+import torch.nn as nn
 
-from src.config import RESULT_DIR
-from src.model.network import RatingPredictor
+from src.config import (
+    FEATURE_COLS_PATH,
+    INFERENCE_RESULT_PATH,
+    MODEL_PATH,
+    RAW_DATA_PATH,
+    SCALER_PATH,
+)
 
 
-def _generate_watch_ratio(rating):
-    z = (rating - 5) / 2
-    ratio = 1 / (1 + np.exp(-z))
-    return np.clip(ratio, 0.05, 0.98)
-
-
-def predict():
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-    model_path = "./src/model/checkpoints/model.pth"
-    scaler_path = os.path.join(RESULT_DIR, "scaler.joblib")
-    csv_path = "./src/data/raw/movies.csv"
-
-    if not all(os.path.exists(p) for p in [model_path, scaler_path, csv_path]):
-        print("에러: 필요한 파일(model, scaler, movies.csv) 중 일부가 없습니다.")
-        return
-
-    feature_cols = ["watch_ratio", "popularity", "runtime", "budget"]
-    input_dim = len(feature_cols)
-    model = RatingPredictor(input_dim=input_dim).to(device)
-    model.load_state_dict(torch.load(model_path, map_location=device))
-    model.eval()
-    scaler = joblib.load(scaler_path)
-    df_db = pd.read_csv(csv_path)
-
-    print("한국 영화 평점 예측 시스템 (종료하려면 'q' 또는 '종료' 입력)")
-
-    while True:
-        print(f"\n현재 DB 내 영화 수: {len(df_db)}개")
-        search_title = input("평점을 예측할 한국 영화 제목을 입력하세요 (종료: q): ").strip()
-
-        # 종료 조건 체크
-        if search_title.lower() in ["q", "quit", "종료", "exit"]:
-            print("한국 영화 평점 예측 시스템을 종료합니다.")
-            break
-
-        if not search_title:
-            continue
-
-        target_movie = df_db[df_db["title"].str.contains(search_title, case=False, na=False)]
-
-        if target_movie.empty:
-            print(f"'{search_title}'와 일치하는 영화를 찾을 수 없습니다.")
-            continue
-
-        target_movie = target_movie.sort_values(by="release_date", ascending=True)
-
-        if len(target_movie) == 1:
-            movie = target_movie.iloc[0]
-            print(
-                f"\n\t[검색결과]\n\t[{movie['title']}] (개봉일: {movie['release_date']})]에 대한 검색 결과는 총 1건 입니다."
-            )
-        else:
-            print(
-                f"\n\t[검색결과]\n\t[{search_title}]에 대한 검색 결과는 총 {len(target_movie)}건 입니다. (개봉일순):\n"
-            )
-
-            display_movie = target_movie.head(10)
-            for i, (idx, row) in enumerate(display_movie.iterrows(), 1):
-                print(f"\t[{i}] {row['title']} ({row['release_date']})")
-
-            try:
-                choice = input("\n분석할 영화의 번호를 입력하세요 (취소: c): ").strip()
-                if choice.lower() == "c":
-                    continue
-
-                selected_idx = int(choice) - 1
-                if not (0 <= selected_idx < len(display_movie)):
-                    print("잘못된 번호입니다. 다시 시도해 주세요.")
-                    continue
-
-                movie = display_movie.iloc[selected_idx]
-            except ValueError:
-                print("숫자만 입력 가능합니다.")
-                continue
-
-        country_data = str(movie.get("origin_country", "")).upper()
-        original_lang = str(movie.get("original_language", "")).lower()
-
-        if not ("KR" in country_data or "ko" in original_lang):
-            print(f"경고: 입력하신 영화제목 [{movie['title']}]은(는) 한국 영화가 아닙니다.")
-            print(
-                "경고: 본 모델은 한국 영화 데이터에 최적화되어 있어 외국 영화의 예측을 제한 합니다."
-            )
-            continue
-
-        watch_ratio = _generate_watch_ratio(movie["vote_average"])
-
-        pop_val = movie.get("popularity", 0)
-        run_val = movie.get("runtime", 120)
-        bud_val = movie.get("budget", 0)
-
-        clean_popularity = float(pop_val) if not pd.isna(pop_val) else 0.0
-        clean_runtime = float(run_val) if not pd.isna(run_val) and run_val > 0 else 120.0
-        clean_budget = float(bud_val) if not pd.isna(bud_val) else 0.0
-
-        clean_popularity = min(clean_popularity, 500)
-        clean_budget = min(clean_budget, 300_000_000)
-
-        raw_input = pd.DataFrame(
-            [[watch_ratio, clean_popularity, clean_runtime, clean_budget]],
-            columns=feature_cols,
+class RatingMLP(nn.Module):
+    def __init__(self, input_dim: int):
+        super().__init__()
+        self.model = nn.Sequential(
+            nn.Linear(input_dim, 128),
+            nn.ReLU(),
+            nn.Linear(128, 64),
+            nn.ReLU(),
+            nn.Linear(64, 32),
+            nn.ReLU(),
+            nn.Linear(32, 1),
         )
 
-        scaled_input = scaler.transform(raw_input)
+    def forward(self, x):
+        return self.model(x)
 
-        if np.isnan(scaled_input).any():
-            print("경고: 입력 데이터에 결측치가 포함되어 있습니다. 기본값으로 대체합니다.")
-            scaled_input = np.nan_to_num(scaled_input)
 
-        input_tensor = torch.tensor(scaled_input, dtype=torch.float32).to(device)
+def add_features(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
 
-        with torch.no_grad():
-            prediction = model(input_tensor)
-            result = prediction.item()
-            predicted_rating = np.clip(result * 10.0, 0.0, 10.0)
+    if "release_date" in df.columns:
+        df["release_date"] = pd.to_datetime(df["release_date"], errors="coerce")
+        df["release_year"] = df["release_date"].dt.year.fillna(0).astype(int)
+        df["release_month"] = df["release_date"].dt.month.fillna(0).astype(int)
+    else:
+        df["release_year"] = 0
+        df["release_month"] = 0
 
-        print(f"\n\t(1) 모델이 분석한 예상 평점: {predicted_rating:.2f} / 10.0 점")
-        print(f"\t(2) 실제 TMDB 평점: {movie['vote_average']:.2f} / 10.0 점")
+    for col in ["popularity", "runtime", "budget", "vote_count"]:
+        if col not in df.columns:
+            df[col] = 0
+        df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
+
+    df["log_popularity"] = np.log1p(df["popularity"])
+    df["log_budget"] = np.log1p(df["budget"])
+    df["log_vote_count"] = np.log1p(df["vote_count"])
+
+    current_year = pd.Timestamp.now().year
+    df["movie_age"] = current_year - df["release_year"]
+    df["movie_age"] = df["movie_age"].clip(lower=0)
+
+    runtime_safe = df["runtime"].replace(0, np.nan)
+    vote_count_safe = df["vote_count"].replace(0, np.nan)
+
+    df["budget_per_runtime"] = df["budget"] / runtime_safe
+    df["budget_per_runtime"] = df["budget_per_runtime"].replace([np.inf, -np.inf], np.nan).fillna(0)
+    df["log_budget_per_runtime"] = np.log1p(df["budget_per_runtime"])
+
+    df["popularity_per_vote"] = df["popularity"] / vote_count_safe
+    df["popularity_per_vote"] = (
+        df["popularity_per_vote"].replace([np.inf, -np.inf], np.nan).fillna(0)
+    )
+    df["log_popularity_per_vote"] = np.log1p(df["popularity_per_vote"])
+
+    if "adult" not in df.columns:
+        df["adult"] = 0
+
+    df["adult"] = (
+        df["adult"]
+        .astype(str)
+        .str.lower()
+        .map({"true": 1, "false": 0, "1": 1, "0": 0})
+        .fillna(0)
+        .astype(int)
+    )
+
+    genre_cols = [col for col in df.columns if col.startswith("genre_")]
+    valid_genre_cols = []
+
+    for col in genre_cols:
+        if col == "genre_count":
+            continue
+
+        numeric_col = pd.to_numeric(df[col], errors="coerce")
+        non_null = numeric_col.dropna()
+        unique_vals = set(non_null.unique())
+
+        if len(non_null) > 0 and unique_vals.issubset({0, 1}):
+            df[col] = numeric_col.fillna(0).astype(int)
+            valid_genre_cols.append(col)
+
+    if valid_genre_cols:
+        df["genre_count"] = df[valid_genre_cols].sum(axis=1)
+    else:
+        df["genre_count"] = 0
+
+    return df
+
+
+def main():
+    raw_path = Path(RAW_DATA_PATH)
+    model_path = Path(MODEL_PATH)
+    scaler_path = Path(SCALER_PATH)
+    feature_cols_path = Path(FEATURE_COLS_PATH)
+    save_path = Path(INFERENCE_RESULT_PATH)
+
+    df = pd.read_csv(raw_path)
+    print(f"- 원본 데이터 로드 완료: {len(df)}건")
+
+    if "original_language" in df.columns:
+        df = df[df["original_language"] == "ko"].copy()
+        print(f"- 한국 영화 필터링 완료: {len(df)}건")
+
+    if "vote_count" in df.columns:
+        df["vote_count"] = pd.to_numeric(df["vote_count"], errors="coerce").fillna(0)
+
+    if "vote_average" in df.columns:
+        df["vote_average"] = pd.to_numeric(df["vote_average"], errors="coerce").fillna(0)
+
+    if "vote_count" in df.columns and "vote_average" in df.columns:
+        df = df[(df["vote_count"] >= 10) & (df["vote_average"] > 0)].copy()
+        print(f"- 평가용 필터 적용 완료: {len(df)}건")
+
+    df = add_features(df)
+
+    feature_cols = joblib.load(feature_cols_path)
+    scaler = joblib.load(scaler_path)
+
+    for col in feature_cols:
+        if col not in df.columns:
+            df[col] = 0
+
+    X = df[feature_cols].copy().fillna(0)
+    X_scaled = scaler.transform(X)
+    X_tensor = torch.tensor(X_scaled, dtype=torch.float32)
+
+    model = RatingMLP(input_dim=len(feature_cols))
+    model.load_state_dict(torch.load(model_path, map_location="cpu"))
+    model.eval()
+
+    with torch.no_grad():
+        preds = model(X_tensor).squeeze().numpy()
+
+    preds = np.clip(preds, 0, 10)
+    df["predicted_rating"] = preds
+
+    if "vote_average" in df.columns:
+        df["abs_error"] = (df["vote_average"] - df["predicted_rating"]).abs()
+
+    save_path.parent.mkdir(parents=True, exist_ok=True)
+    df.to_csv(save_path, index=False)
+    print(f"- 추론 완료: {save_path}")
+
+    show_cols = ["title", "release_date", "vote_average", "predicted_rating", "abs_error"]
+    show_cols = [col for col in show_cols if col in df.columns]
+
+    if "abs_error" in df.columns:
+        print("\n- abs_error 가장 작은 10건")
+        print(df[show_cols].sort_values("abs_error").head(10))
+
+        print("\n- abs_error 가장 큰 10건")
+        print(df[show_cols].sort_values("abs_error", ascending=False).head(10))
+
+        print("\n- abs_error 요약")
+        print(df["abs_error"].describe())
+    else:
+        print(df[show_cols].head(10))
 
 
 if __name__ == "__main__":
-    try:
-        predict()
-    except KeyboardInterrupt:
-        print("\n\n사용자 요청에 의해 한국 영화 예측 모델을 종료합니다.")
-        try:
-            sys.exit(0)
-        except SystemExit:
-            os._exit(0)
+    main()

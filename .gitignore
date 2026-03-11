@@ -3,6 +3,15 @@
 
 wandb/
 /src/data/raw/
+# processed data
+src/data/processed/
+
+# model artifacts
+src/model/*.pt
+src/model/*.pkl
+
+# inference outputs
+src/data/result/*.csv
 /src/data/result/
 
 
