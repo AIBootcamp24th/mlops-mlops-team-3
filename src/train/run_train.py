@@ -25,6 +25,7 @@ from src.data.validation import validate_training_frame
 from src.monitor.wandb_logger import init_run
 from src.train.model import RatingRegressor
 from src.train.trainer import evaluate, train_one_epoch
+from src.utils.slack_notifier import send_slack_message
 
 
 def _load_payload(max_attempts: int = 6, wait_seconds: int = 10) -> dict[str, Any]:
@@ -80,6 +81,7 @@ def main() -> None:
             "tuning_profile": tuning_profile,
         }
     )
+    send_slack_message(f":hourglass_flowing_sand: *학습 시작* (Data: `{s3_key}`)")
 
     run.summary["status"] = "running"
     run.summary["data_version"] = s3_key
@@ -188,9 +190,16 @@ def main() -> None:
         delete_message(settings.train_queue_url, payload["_receipt_handle"])
         run.summary["status"] = "success"
         success = True
+        send_slack_message(
+            f":white_check_mark: *학습 성공*\n"
+            f"- Model: `{model_key}`\n"
+            f"- RMSE: `{best_val_rmse:.4f}`\n"
+            f"- Epoch: `{best_epoch}`"
+        )
     except Exception as exc:
         run.summary["status"] = "failed"
         run.summary["error"] = str(exc)
+        send_slack_message(f":x: *학습 실패*\n- Error: `{str(exc)}`")
         raise
     finally:
         if not success:
