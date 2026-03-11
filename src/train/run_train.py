@@ -1,3 +1,6 @@
+"""
+운영 표준 학습 엔트리포인트. SQS 메시지 수신 → S3 데이터 다운로드 → PyTorch 학습 → W&B/S3 아티팩트.
+"""
 from __future__ import annotations
 
 import json
@@ -57,6 +60,7 @@ def main() -> None:
     target_col = payload.get("target_col", TARGET_COL)
     feature_cols = payload.get("feature_cols", FEATURE_COLS)
     epochs = int(payload.get("epochs", 10))
+    early_stopping_patience = int(payload.get("early_stopping_patience", 10))
     batch_size = int(payload.get("batch_size", 64))
     learning_rate = float(payload.get("learning_rate", 1e-3))
     hidden_dims = tuple(payload.get("hidden_dims", [128, 64]))
@@ -66,6 +70,7 @@ def main() -> None:
 
     _set_global_seed(seed)
 
+    min_train_samples = int(payload.get("min_train_samples", 50))
     run = init_run(
         {
             "s3_key": s3_key,
@@ -73,6 +78,8 @@ def main() -> None:
             "target_col": target_col,
             "feature_cols": feature_cols,
             "epochs": epochs,
+            "early_stopping_patience": early_stopping_patience,
+            "min_train_samples": min_train_samples,
             "batch_size": batch_size,
             "learning_rate": learning_rate,
             "hidden_dims": hidden_dims,
@@ -95,12 +102,13 @@ def main() -> None:
             df = df[feature_cols + [target_col]].dropna()
             validate_training_frame(df, feature_cols, target_col)
 
-            # Guard tiny datasets from S3 (e.g., bootstrap/test uploads) so
-            # orchestration can still proceed without split/BatchNorm errors.
-            if len(df) < 3:
-                repeat = (3 + len(df) - 1) // max(1, len(df))
-                df = pd.concat([df] * repeat, ignore_index=True).head(3)
-                print("경고: 학습 데이터가 3건 미만이라 샘플을 복제해 최소 학습 조건을 맞췄습니다.")
+            if len(df) < min_train_samples:
+                msg = (
+                    f"학습 데이터가 최소 기준({min_train_samples}건) 미만입니다. "
+                    f"현재: {len(df)}건. 복제 학습을 하지 않고 실패 처리합니다."
+                )
+                send_slack_message(f":x: *학습 실패*\n- {msg}")
+                raise RuntimeError(msg)
 
             sample_count = len(df)
             test_size = max(1, int(round(sample_count * 0.2)))
@@ -125,6 +133,7 @@ def main() -> None:
             best_out_of_range_ratio = float("inf")
             best_epoch = 0
             best_state_dict: dict[str, Any] | None = None
+            epochs_without_improvement = 0
             for epoch in range(1, epochs + 1):
                 train_loss = train_one_epoch(model, train_loader, optimizer)
                 val_rmse = evaluate(model, val_loader)
@@ -144,8 +153,10 @@ def main() -> None:
                     best_val_rmse = val_rmse
                     best_out_of_range_ratio = out_of_range_ratio
                     best_epoch = epoch
-                    # Store the best checkpoint to avoid quality regressions in later epochs.
                     best_state_dict = deepcopy(model.state_dict())
+                    epochs_without_improvement = 0
+                else:
+                    epochs_without_improvement += 1
 
                 run.log(
                     {
@@ -155,6 +166,13 @@ def main() -> None:
                         "val_out_of_range_ratio": out_of_range_ratio,
                     }
                 )
+
+                if epochs_without_improvement >= early_stopping_patience:
+                    print(
+                        f"Early stopping: {early_stopping_patience} epoch 연속 개선 없음 "
+                        f"(epoch {epoch})"
+                    )
+                    break
 
             model_path = str(Path(tmpdir) / "rating_model.pt")
             if best_state_dict is None:

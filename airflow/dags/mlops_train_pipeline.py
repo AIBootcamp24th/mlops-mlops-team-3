@@ -1,3 +1,7 @@
+"""
+학습 파이프라인: DAG 내부 동기 실행 모드.
+SQS dispatch → 동일 DAG run 내 run_train (큐 소비) → quality_gate 순차 실행.
+"""
 from __future__ import annotations
 
 import subprocess
@@ -128,7 +132,7 @@ with DAG(
         append_env=True,
         env={
             "PYTHONPATH": "/opt/airflow/project",
-            "QUALITY_GATE_REQUIRED": "false",
+            "QUALITY_GATE_REQUIRED": "true",
             "QUALITY_GATE_MAX_RUNS": "50",
         },
         bash_command="cd /opt/airflow/project && python scripts/register_model.py",

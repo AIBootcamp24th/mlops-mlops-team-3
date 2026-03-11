@@ -1,3 +1,7 @@
+"""
+[LEGACY] 로컬 CSV 기반 학습 스크립트.
+운영 파이프라인에서는 src.train.run_train (SQS + S3 + W&B)을 사용하세요.
+"""
 import random
 from pathlib import Path
 

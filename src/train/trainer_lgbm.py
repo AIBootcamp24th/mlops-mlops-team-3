@@ -1,3 +1,7 @@
+"""
+[EXPERIMENTAL] LightGBM 기반 평점 예측 학습.
+운영 파이프라인은 PyTorch run_train을 사용합니다.
+"""
 from pathlib import Path
 
 import joblib

@@ -88,7 +88,7 @@ app = FastAPI(
 
 def _parse_cors_origins(raw: str) -> list[str]:
     if not raw.strip():
-        return ["*"]
+        return ["http://localhost:3000", "http://127.0.0.1:3000"]
     return [origin.strip() for origin in raw.split(",") if origin.strip()]
 
 
