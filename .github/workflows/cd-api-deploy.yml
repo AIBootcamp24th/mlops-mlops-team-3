@@ -38,7 +38,6 @@ jobs:
 
       - name: Prepare SSH keys for deploy script
         shell: bash
-        working-directory: mlops_project
         env:
           SSH_PRIVATE_KEY: ${{ secrets.AWS_DEPLOY_SSH_PRIVATE_KEY }}
           SSH_PUBLIC_KEY: ${{ secrets.AWS_DEPLOY_SSH_PUBLIC_KEY }}
@@ -55,7 +54,6 @@ jobs:
 
       - name: Deploy API to AWS EC2
         shell: bash
-        working-directory: mlops_project
         env:
           AWS_REGION: ${{ secrets.AWS_REGION }}
           INSTANCE_ID: ${{ secrets.AWS_DEPLOY_INSTANCE_ID }}
@@ -76,6 +74,5 @@ jobs:
       - name: Cleanup temporary SSH keys
         if: ${{ always() }}
         shell: bash
-        working-directory: mlops_project
         run: |
           rm -f .tmp/deploy_key .tmp/deploy_key.pub
