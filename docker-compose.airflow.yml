@@ -27,7 +27,7 @@ services:
     restart: unless-stopped
 
   airflow-init:
-    image: apache/airflow:2.10.2-python3.11
+    image: mlops-airflow-custom:2.10.2
     container_name: mlops-airflow-init
     depends_on:
       airflow-mysql:
@@ -42,7 +42,7 @@ services:
       AIRFLOW__API__AUTH_BACKENDS: airflow.api.auth.backend.basic_auth
       AIRFLOW__WEBSERVER__BASE_URL: ${AIRFLOW__WEBSERVER__BASE_URL:-https://www.dongsol.com/airflow}
       AIRFLOW__WEBSERVER__ENABLE_PROXY_FIX: "true"
-      _PIP_ADDITIONAL_REQUIREMENTS: "boto3>=1.37.0 pydantic-settings>=2.7.0 wandb>=0.19.0 torch>=2.6.0 scikit-learn>=1.6.0 tqdm>=4.67.0 sqlalchemy<2 pymysql>=1.1.0"
+      _PIP_ADDITIONAL_REQUIREMENTS: ""
       AWS_REGION: ${AWS_REGION:-}
       AWS_DEFAULT_REGION: ${AWS_REGION:-}
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
@@ -68,7 +68,6 @@ services:
 
     command: >
       bash -c "
-      pip install --no-cache-dir 'pymysql>=1.1.0' &&
       airflow db migrate &&
       airflow users create
       --username $${AIRFLOW_ADMIN_USERNAME:-admin}
@@ -80,7 +79,7 @@ services:
       "
 
   airflow-webserver:
-    image: apache/airflow:2.10.2-python3.11
+    image: mlops-airflow-custom:2.10.2
     container_name: mlops-airflow-webserver
     depends_on:
       airflow-init:
@@ -90,17 +89,13 @@ services:
       - .env.secrets
     environment: *airflow-common-env
     volumes: *airflow-common-volumes
-    command: >
-      bash -c "
-      pip install --no-cache-dir 'pymysql>=1.1.0' &&
-      airflow webserver
-      "
+    command: webserver
     ports:
       - "8085:8080"
     restart: unless-stopped
 
   airflow-scheduler:
-    image: apache/airflow:2.10.2-python3.11
+    image: mlops-airflow-custom:2.10.2
     container_name: mlops-airflow-scheduler
     depends_on:
       airflow-init:
@@ -110,11 +105,7 @@ services:
       - .env.secrets
     environment: *airflow-common-env
     volumes: *airflow-common-volumes
-    command: >
-      bash -c "
-      pip install --no-cache-dir 'pymysql>=1.1.0' &&
-      airflow scheduler
-      "
+    command: scheduler
     restart: unless-stopped
 
 volumes:
