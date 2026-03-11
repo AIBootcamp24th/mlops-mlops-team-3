@@ -68,12 +68,9 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(
-    title="TMDB /analyze 통합 API",
-    description=(
-        "영화 제목을 입력하면 메타데이터를 조회해 평점을 예측하고, "
-        "해당 영화와 유사한 한국 영화 추천 목록을 함께 반환합니다."
-    ),
+    title="3조 - 영화예측 및 추천 프로젝트",
     version="3.0.0",
+    description="프로젝트 참여자\n- [유준우(팀장)](https://github.com/joonwoo-yoo)\n\n- [송민성](https://github.com/alstjd0051)\n\n- [이재석](https://github.com/wotjrzm) ",
     lifespan=lifespan,
     openapi_tags=[
         {

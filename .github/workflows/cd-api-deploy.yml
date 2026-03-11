@@ -1,6 +1,7 @@
 name: CD API Deploy to AWS
 
 on:
+  workflow_dispatch:
   workflow_run:
     workflows: ["CI"]
     types: [completed]
@@ -16,15 +17,24 @@ jobs:
   deploy-api:
     if: >-
       ${{
-        github.event.workflow_run.conclusion == 'success'
-        && github.event.workflow_run.head_branch == 'main'
+        (
+          github.event_name == 'workflow_dispatch'
+          && github.ref == 'refs/heads/main'
+        )
+        || (
+          github.event_name == 'workflow_run'
+          &&
+          github.event.workflow_run.conclusion == 'success'
+          && github.event.workflow_run.head_branch == 'main'
+        )
       }}
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - name: Checkout merged main commit
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.workflow_run.head_sha }}
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -35,6 +45,85 @@ jobs:
 
       - name: Setup Docker Buildx
         uses: docker/setup-buildx-action@v3
+
+      - name: Resolve deploy target dynamically
+        shell: bash
+        env:
+          INSTANCE_ID: ${{ secrets.AWS_DEPLOY_INSTANCE_ID }}
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+          REMOTE_USER_VAR: ${{ vars.AWS_DEPLOY_REMOTE_USER }}
+          REMOTE_PORT_VAR: ${{ vars.AWS_DEPLOY_REMOTE_PORT }}
+          REMOTE_DIR_VAR: ${{ vars.AWS_DEPLOY_REMOTE_DIR }}
+          API_PORT_VAR: ${{ vars.AWS_DEPLOY_API_PORT }}
+          PRUNE_REMOTE_VAR: ${{ vars.AWS_DEPLOY_PRUNE_REMOTE }}
+        run: |
+          set -euo pipefail
+
+          INSTANCE_STATE="$(aws ec2 describe-instances \
+            --region "${AWS_REGION}" \
+            --instance-ids "${INSTANCE_ID}" \
+            --query "Reservations[0].Instances[0].State.Name" \
+            --output text)"
+
+          if [[ "${INSTANCE_STATE}" != "running" ]]; then
+            echo "ERROR: 배포 대상 인스턴스가 running 상태가 아닙니다. state=${INSTANCE_STATE}"
+            exit 1
+          fi
+
+          REMOTE_HOST="$(aws ec2 describe-instances \
+            --region "${AWS_REGION}" \
+            --instance-ids "${INSTANCE_ID}" \
+            --query "Reservations[0].Instances[0].PublicIpAddress" \
+            --output text)"
+
+          if [[ -z "${REMOTE_HOST}" || "${REMOTE_HOST}" == "None" ]]; then
+            echo "ERROR: 대상 인스턴스의 Public IP를 확인할 수 없습니다."
+            exit 1
+          fi
+
+          IMAGE_ID="$(aws ec2 describe-instances \
+            --region "${AWS_REGION}" \
+            --instance-ids "${INSTANCE_ID}" \
+            --query "Reservations[0].Instances[0].ImageId" \
+            --output text)"
+          IMAGE_NAME="$(aws ec2 describe-images \
+            --region "${AWS_REGION}" \
+            --image-ids "${IMAGE_ID}" \
+            --query "Images[0].Name" \
+            --output text)"
+          IMAGE_NAME_LC="$(echo "${IMAGE_NAME}" | tr '[:upper:]' '[:lower:]')"
+
+          if [[ -n "${REMOTE_USER_VAR}" ]]; then
+            REMOTE_USER="${REMOTE_USER_VAR}"
+          elif [[ "${IMAGE_NAME_LC}" == *ubuntu* ]]; then
+            REMOTE_USER="ubuntu"
+          elif [[ "${IMAGE_NAME_LC}" == *amzn* || "${IMAGE_NAME_LC}" == *amazon* || "${IMAGE_NAME_LC}" == *al2023* ]]; then
+            REMOTE_USER="ec2-user"
+          else
+            REMOTE_USER="ubuntu"
+          fi
+
+          REMOTE_PORT="${REMOTE_PORT_VAR:-22}"
+          API_PORT="${API_PORT_VAR:-8000}"
+          PRUNE_REMOTE="${PRUNE_REMOTE_VAR:-true}"
+
+          if [[ -n "${REMOTE_DIR_VAR}" ]]; then
+            REMOTE_DIR="${REMOTE_DIR_VAR}"
+          else
+            REMOTE_DIR="/home/${REMOTE_USER}/team_mlops/mlops_project"
+          fi
+
+          echo "DEPLOY_REMOTE_HOST=${REMOTE_HOST}" >> "${GITHUB_ENV}"
+          echo "DEPLOY_REMOTE_USER=${REMOTE_USER}" >> "${GITHUB_ENV}"
+          echo "DEPLOY_REMOTE_PORT=${REMOTE_PORT}" >> "${GITHUB_ENV}"
+          echo "DEPLOY_REMOTE_DIR=${REMOTE_DIR}" >> "${GITHUB_ENV}"
+          echo "DEPLOY_API_PORT=${API_PORT}" >> "${GITHUB_ENV}"
+          echo "DEPLOY_PRUNE_REMOTE=${PRUNE_REMOTE}" >> "${GITHUB_ENV}"
+
+          echo "resolved_remote_host=${REMOTE_HOST}"
+          echo "resolved_remote_user=${REMOTE_USER}"
+          echo "resolved_remote_port=${REMOTE_PORT}"
+          echo "resolved_remote_dir=${REMOTE_DIR}"
 
       - name: Prepare SSH keys for deploy script
         shell: bash
@@ -53,19 +142,20 @@ jobs:
           chmod 644 .tmp/deploy_key.pub
 
       - name: Deploy API to AWS EC2
+        timeout-minutes: 20
         shell: bash
         env:
           AWS_REGION: ${{ secrets.AWS_REGION }}
           INSTANCE_ID: ${{ secrets.AWS_DEPLOY_INSTANCE_ID }}
           INSTANCE_AZ: ${{ secrets.AWS_DEPLOY_INSTANCE_AZ }}
-          REMOTE_HOST: ${{ secrets.AWS_DEPLOY_REMOTE_HOST }}
-          REMOTE_USER: ${{ vars.AWS_DEPLOY_REMOTE_USER }}
-          REMOTE_PORT: ${{ vars.AWS_DEPLOY_REMOTE_PORT }}
-          REMOTE_DIR: ${{ vars.AWS_DEPLOY_REMOTE_DIR }}
-          API_PORT: ${{ vars.AWS_DEPLOY_API_PORT }}
-          PRUNE_REMOTE: ${{ vars.AWS_DEPLOY_PRUNE_REMOTE }}
+          REMOTE_HOST: ${{ env.DEPLOY_REMOTE_HOST }}
+          REMOTE_USER: ${{ env.DEPLOY_REMOTE_USER }}
+          REMOTE_PORT: ${{ env.DEPLOY_REMOTE_PORT }}
+          REMOTE_DIR: ${{ env.DEPLOY_REMOTE_DIR }}
+          API_PORT: ${{ env.DEPLOY_API_PORT }}
+          PRUNE_REMOTE: ${{ env.DEPLOY_PRUNE_REMOTE }}
           SKIP_BUILD: "false"
-          DEPLOY_MODE: "auto"
+          DEPLOY_MODE: "image-only"
           SSH_KEY: .tmp/deploy_key
           SSH_PUBLIC_KEY: .tmp/deploy_key.pub
         run: |

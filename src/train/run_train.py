@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import os
 import random
 from copy import deepcopy
 from pathlib import Path
@@ -41,7 +42,19 @@ def _load_payload(max_attempts: int = 6, wait_seconds: int = 10) -> dict[str, An
             return payload
         print(f"학습 큐 폴링 재시도 {attempt}/{max_attempts}: 메시지 없음")
 
-    raise RuntimeError("학습 큐 메시지가 없습니다.")
+    fallback_s3_key = os.getenv("TRAIN_DATA_S3_KEY", "").strip()
+    if fallback_s3_key:
+        print(
+            "학습 큐 메시지를 찾지 못해 TRAIN_DATA_S3_KEY fallback으로 진행합니다: "
+            f"{fallback_s3_key}"
+        )
+        return {
+            "s3_key": fallback_s3_key,
+            "target_col": TARGET_COL,
+            "feature_cols": FEATURE_COLS,
+        }
+
+    raise RuntimeError("학습 큐 메시지가 없고 TRAIN_DATA_S3_KEY fallback도 없습니다.")
 
 
 def _set_global_seed(seed: int) -> None:
@@ -205,7 +218,8 @@ def main() -> None:
             artifact.add_file(model_path)
             run.log_artifact(artifact)
 
-        delete_message(settings.train_queue_url, payload["_receipt_handle"])
+        if payload.get("_receipt_handle"):
+            delete_message(settings.train_queue_url, payload["_receipt_handle"])
         run.summary["status"] = "success"
         success = True
         send_slack_message(
