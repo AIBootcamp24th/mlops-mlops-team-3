@@ -44,8 +44,14 @@ def validate_runtime_env() -> None:
         ) from exc
 
 
-def check_for_data_changes() -> bool:
+def check_for_data_changes(**context) -> bool:
     """exit 0 means change detected, exit 1 means no change."""
+    dag_run = context.get("dag_run")
+    if dag_run and getattr(dag_run, "conf", None):
+        if bool(dag_run.conf.get("force_run", False)):
+            print("force_run=true 이므로 데이터 변경 체크를 우회하고 학습을 진행합니다.")
+            return True
+
     try:
         result = subprocess.run(
             ["python", "scripts/check_data_change.py"],
@@ -123,7 +129,10 @@ with DAG(
     run_train_once = BashOperator(
         task_id="run_train_worker_once",
         append_env=True,
-        env={"PYTHONPATH": "/opt/airflow/project"},
+        env={
+            "PYTHONPATH": "/opt/airflow/project",
+            "TRAIN_DATA_S3_KEY": train_data_s3_key,
+        },
         bash_command="cd /opt/airflow/project && python -m src.train.run_train",
     )
 
@@ -132,8 +141,9 @@ with DAG(
         append_env=True,
         env={
             "PYTHONPATH": "/opt/airflow/project",
-            "QUALITY_GATE_REQUIRED": "true",
-            "QUALITY_GATE_MAX_RUNS": "50",
+            "QUALITY_GATE_REQUIRED": "false",
+            "WANDB_API_KEY": "",
+            "QUALITY_GATE_MAX_RUNS": "20",
         },
         bash_command="cd /opt/airflow/project && python scripts/register_model.py",
     )

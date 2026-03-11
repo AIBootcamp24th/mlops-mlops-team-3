@@ -116,22 +116,26 @@ class TMDBCollector:
             """)
 
             for index, (_, row) in enumerate(df.iterrows(), start=1):
+                # MySQL 드라이버는 NaN 값을 처리하지 못하므로 DB insert 전에 None으로 정규화한다.
+                def _none_if_na(value):
+                    return None if pd.isna(value) else value
+
                 params = {
                     "id": row.get("id"),
-                    "title": row.get("title"),
-                    "original_title": row.get("original_title"),
-                    "overview": row.get("overview"),
+                    "title": _none_if_na(row.get("title")),
+                    "original_title": _none_if_na(row.get("original_title")),
+                    "overview": _none_if_na(row.get("overview")),
                     "release_date": None
                     if pd.isna(row.get("release_date")) or row.get("release_date") == ""
                     else row.get("release_date"),  # 날짜가 비어있거나 NaT인 경우 None으로 저장
-                    "vote_average": row.get("vote_average"),
-                    "vote_count": row.get("vote_count"),
-                    "popularity": row.get("popularity"),
-                    "original_language": row.get("original_language"),
-                    "poster_path": row.get("poster_path"),
+                    "vote_average": _none_if_na(row.get("vote_average")),
+                    "vote_count": _none_if_na(row.get("vote_count")),
+                    "popularity": _none_if_na(row.get("popularity")),
+                    "original_language": _none_if_na(row.get("original_language")),
+                    "poster_path": _none_if_na(row.get("poster_path")),
                     "genres": json.dumps(row.get("genre_ids", [])),
-                    "budget": row.get("budget", 0),
-                    "runtime": row.get("runtime", 0),
+                    "budget": _none_if_na(row.get("budget", 0)),
+                    "runtime": _none_if_na(row.get("runtime", 0)),
                 }
                 for attempt in range(1, max_lock_retries + 1):
                     try:
