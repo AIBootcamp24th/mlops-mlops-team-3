@@ -87,7 +87,9 @@ class TMDBClient:
             raise ValueError("영화 검색 결과가 없습니다.")
 
         korean_results = [item for item in results if item.get("original_language") == KOREAN_LANGUAGE_CODE]
-        return korean_results[0] if korean_results else results[0]
+        if not korean_results:
+            raise ValueError("한국 영화 검색 결과가 없습니다.")
+        return korean_results[0]
 
     def movie_detail(self, movie_id: int) -> dict[str, Any]:
         self._ensure_api_key()

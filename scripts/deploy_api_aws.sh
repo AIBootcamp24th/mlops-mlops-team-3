@@ -128,26 +128,31 @@ else
 fi
 
 echo "[2/7] EC2 Instance Connect 임시 키 주입"
-# AWS_PROFILE이 설정된 경우에만 --profile 옵션 사용
-if [[ -n "${AWS_PROFILE:-}" ]]; then
-  aws ec2-instance-connect send-ssh-public-key \
-    --profile "${AWS_PROFILE}" \
-    --region "${AWS_REGION}" \
-    --instance-id "${INSTANCE_ID}" \
-    --availability-zone "${INSTANCE_AZ}" \
-    --instance-os-user "${REMOTE_USER}" \
-    --ssh-public-key "file://${SSH_PUBLIC_KEY}" >/dev/null
-else
-  aws ec2-instance-connect send-ssh-public-key \
-    --region "${AWS_REGION}" \
-    --instance-id "${INSTANCE_ID}" \
-    --availability-zone "${INSTANCE_AZ}" \
-    --instance-os-user "${REMOTE_USER}" \
-    --ssh-public-key "file://${SSH_PUBLIC_KEY}" >/dev/null
-fi
+inject_eic_key() {
+  # EC2 Instance Connect 키는 짧은 TTL을 가지므로 SSH 직전에 재주입한다.
+  if [[ -n "${AWS_PROFILE:-}" ]]; then
+    aws ec2-instance-connect send-ssh-public-key \
+      --profile "${AWS_PROFILE}" \
+      --region "${AWS_REGION}" \
+      --instance-id "${INSTANCE_ID}" \
+      --availability-zone "${INSTANCE_AZ}" \
+      --instance-os-user "${REMOTE_USER}" \
+      --ssh-public-key "file://${SSH_PUBLIC_KEY}" >/dev/null
+  else
+    aws ec2-instance-connect send-ssh-public-key \
+      --region "${AWS_REGION}" \
+      --instance-id "${INSTANCE_ID}" \
+      --availability-zone "${INSTANCE_AZ}" \
+      --instance-os-user "${REMOTE_USER}" \
+      --ssh-public-key "file://${SSH_PUBLIC_KEY}" >/dev/null
+  fi
+}
+
+inject_eic_key
 
 EFFECTIVE_DEPLOY_MODE="${DEPLOY_MODE}"
 if [[ "${DEPLOY_MODE}" == "auto" ]]; then
+  inject_eic_key
   if ssh -i "${SSH_KEY}" -p "${REMOTE_PORT}" -o StrictHostKeyChecking=accept-new \
     "${REMOTE_USER}@${REMOTE_HOST}" "docker ps -a --format '{{.Names}}' | grep -qx 'mlops-api'" >/dev/null 2>&1; then
     EFFECTIVE_DEPLOY_MODE="image-only"
@@ -165,6 +170,7 @@ echo "deploy_mode(effective): ${EFFECTIVE_DEPLOY_MODE}"
 
 echo "[3/7] 원격 디렉터리 준비"
 if [[ "${EFFECTIVE_DEPLOY_MODE}" == "full" ]]; then
+  inject_eic_key
   ssh -i "${SSH_KEY}" -p "${REMOTE_PORT}" -o StrictHostKeyChecking=accept-new \
     "${REMOTE_USER}@${REMOTE_HOST}" "mkdir -p ${REMOTE_DIR}"
 else
@@ -173,6 +179,7 @@ fi
 
 echo "[4/7] 프로젝트 파일 동기화"
 if [[ "${EFFECTIVE_DEPLOY_MODE}" == "full" ]]; then
+  inject_eic_key
   rsync -az --delete \
     --exclude '.git' --exclude '.venv' --exclude '.pytest_cache' --exclude '.ruff_cache' \
     --exclude 'wandb' --exclude 'tmp' --exclude '__pycache__' \
@@ -184,6 +191,7 @@ fi
 
 echo "[5/7] 원격 디스크 정리(선택)"
 if [[ "${PRUNE_REMOTE}" == "true" && "${EFFECTIVE_DEPLOY_MODE}" == "full" ]]; then
+  inject_eic_key
   ssh -i "${SSH_KEY}" -p "${REMOTE_PORT}" -o StrictHostKeyChecking=accept-new \
     "${REMOTE_USER}@${REMOTE_HOST}" "docker system prune -af >/dev/null || true; docker builder prune -af >/dev/null || true"
 elif [[ "${PRUNE_REMOTE}" == "true" ]]; then
@@ -191,6 +199,7 @@ elif [[ "${PRUNE_REMOTE}" == "true" ]]; then
 fi
 
 echo "[6/7] 이미지 전송"
+inject_eic_key
 docker save "${LOCAL_IMAGE_TAG}" | ssh -i "${SSH_KEY}" -p "${REMOTE_PORT}" -o StrictHostKeyChecking=accept-new \
   "${REMOTE_USER}@${REMOTE_HOST}" "
     docker image rm -f ${REMOTE_IMAGE_TAG} >/dev/null 2>&1 || true &&
@@ -199,6 +208,7 @@ docker save "${LOCAL_IMAGE_TAG}" | ssh -i "${SSH_KEY}" -p "${REMOTE_PORT}" -o St
   "
 
 echo "[7/8] 원격 블루/그린 배포 + 프록시 전환"
+inject_eic_key
 ssh -i "${SSH_KEY}" -p "${REMOTE_PORT}" -o StrictHostKeyChecking=accept-new \
   "${REMOTE_USER}@${REMOTE_HOST}" "
     set -euo pipefail
@@ -242,7 +252,7 @@ ssh -i "${SSH_KEY}" -p "${REMOTE_PORT}" -o StrictHostKeyChecking=accept-new \
       uv run uvicorn src.api.main:app --host 0.0.0.0 --port 8000 >/dev/null
 
     NEXT_HEALTH_CODE=''
-    for i in 1 2 3 4 5 6; do
+    for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30; do
       NEXT_HEALTH_CODE=\"\$(docker run --rm --network \"\${NETWORK_NAME}\" curlimages/curl:8.10.1 -s -o /dev/null -w '%{http_code}' \"http://\${NEXT_NAME}:8000/health\" || true)\"
       echo \"  next_container_health try=\${i} code=\${NEXT_HEALTH_CODE}\"
       if [[ \"\${NEXT_HEALTH_CODE}\" == '200' ]]; then
@@ -264,10 +274,10 @@ server {
 
   location / {
     proxy_http_version 1.1;
-    proxy_set_header Host $host;
-    proxy_set_header X-Real-IP $remote_addr;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header Host \$host;
+    proxy_set_header X-Real-IP \$remote_addr;
+    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto \$scheme;
     proxy_connect_timeout 3s;
     proxy_send_timeout 30s;
     proxy_read_timeout 30s;
