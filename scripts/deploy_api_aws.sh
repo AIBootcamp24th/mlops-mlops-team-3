@@ -31,6 +31,8 @@ CLI_PRECHECK_SSH_BEFORE_BUILD="${PRECHECK_SSH_BEFORE_BUILD-}"
 CLI_SSH_RETRY_COUNT="${SSH_RETRY_COUNT-}"
 CLI_SSH_RETRY_INTERVAL="${SSH_RETRY_INTERVAL-}"
 CLI_SSH_CONNECT_TIMEOUT="${SSH_CONNECT_TIMEOUT-}"
+CLI_AUTO_RECOVER_INSTANCE="${AUTO_RECOVER_INSTANCE-}"
+CLI_INSTANCE_STATUS_WAIT_TIMEOUT_SEC="${INSTANCE_STATUS_WAIT_TIMEOUT_SEC-}"
 
 if [[ -f "${PROJECT_ROOT}/remote.env" ]]; then
   set -a
@@ -60,6 +62,8 @@ PRECHECK_SSH_BEFORE_BUILD="${PRECHECK_SSH_BEFORE_BUILD:-true}"
 SSH_RETRY_COUNT="${SSH_RETRY_COUNT:-8}"
 SSH_RETRY_INTERVAL="${SSH_RETRY_INTERVAL:-10}"
 SSH_CONNECT_TIMEOUT="${SSH_CONNECT_TIMEOUT:-10}"
+AUTO_RECOVER_INSTANCE="${AUTO_RECOVER_INSTANCE:-true}"
+INSTANCE_STATUS_WAIT_TIMEOUT_SEC="${INSTANCE_STATUS_WAIT_TIMEOUT_SEC:-600}"
 
 # remote.env 로딩 후에도 CLI/환경변수 입력값이 있으면 우선 적용
 [[ -n "${CLI_AWS_PROFILE}" ]] && AWS_PROFILE="${CLI_AWS_PROFILE}"
@@ -82,6 +86,8 @@ SSH_CONNECT_TIMEOUT="${SSH_CONNECT_TIMEOUT:-10}"
 [[ -n "${CLI_SSH_RETRY_COUNT}" ]] && SSH_RETRY_COUNT="${CLI_SSH_RETRY_COUNT}"
 [[ -n "${CLI_SSH_RETRY_INTERVAL}" ]] && SSH_RETRY_INTERVAL="${CLI_SSH_RETRY_INTERVAL}"
 [[ -n "${CLI_SSH_CONNECT_TIMEOUT}" ]] && SSH_CONNECT_TIMEOUT="${CLI_SSH_CONNECT_TIMEOUT}"
+[[ -n "${CLI_AUTO_RECOVER_INSTANCE}" ]] && AUTO_RECOVER_INSTANCE="${CLI_AUTO_RECOVER_INSTANCE}"
+[[ -n "${CLI_INSTANCE_STATUS_WAIT_TIMEOUT_SEC}" ]] && INSTANCE_STATUS_WAIT_TIMEOUT_SEC="${CLI_INSTANCE_STATUS_WAIT_TIMEOUT_SEC}"
 
 if [[ -z "${REMOTE_HOST:-}" ]]; then
   # AWS_PROFILE이 설정된 경우에만 --profile 옵션 사용
@@ -133,59 +139,139 @@ fi
 
 NGINX_TEMPLATE_CONTENT_ESCAPED="$(sed 's/[$`\\]/\\&/g' "${NGINX_TEMPLATE_PATH}")"
 
+aws_cli() {
+  if [[ -n "${AWS_PROFILE:-}" ]]; then
+    aws --profile "${AWS_PROFILE}" "$@"
+  else
+    aws "$@"
+  fi
+}
+
 inject_eic_key() {
   # EC2 Instance Connect 키는 짧은 TTL을 가지므로 SSH 직전에 재주입한다.
-  if [[ -n "${AWS_PROFILE:-}" ]]; then
-    aws ec2-instance-connect send-ssh-public-key \
-      --profile "${AWS_PROFILE}" \
-      --region "${AWS_REGION}" \
-      --instance-id "${INSTANCE_ID}" \
-      --availability-zone "${INSTANCE_AZ}" \
-      --instance-os-user "${REMOTE_USER}" \
-      --ssh-public-key "file://${SSH_PUBLIC_KEY}" >/dev/null
-  else
-    aws ec2-instance-connect send-ssh-public-key \
-      --region "${AWS_REGION}" \
-      --instance-id "${INSTANCE_ID}" \
-      --availability-zone "${INSTANCE_AZ}" \
-      --instance-os-user "${REMOTE_USER}" \
-      --ssh-public-key "file://${SSH_PUBLIC_KEY}" >/dev/null
-  fi
+  aws_cli ec2-instance-connect send-ssh-public-key \
+    --region "${AWS_REGION}" \
+    --instance-id "${INSTANCE_ID}" \
+    --availability-zone "${INSTANCE_AZ}" \
+    --instance-os-user "${REMOTE_USER}" \
+    --ssh-public-key "file://${SSH_PUBLIC_KEY}" >/dev/null
 }
 
 check_instance_reachability() {
   local instance_reachability="unknown"
   local system_reachability="unknown"
-  if [[ -n "${AWS_PROFILE:-}" ]]; then
-    instance_reachability="$(aws ec2 describe-instance-status \
-      --profile "${AWS_PROFILE}" \
-      --region "${AWS_REGION}" \
-      --instance-ids "${INSTANCE_ID}" \
-      --include-all-instances \
-      --query "InstanceStatuses[0].InstanceStatus.Details[?Name=='reachability']|[0].Status" \
-      --output text 2>/dev/null || true)"
-    system_reachability="$(aws ec2 describe-instance-status \
-      --profile "${AWS_PROFILE}" \
-      --region "${AWS_REGION}" \
-      --instance-ids "${INSTANCE_ID}" \
-      --include-all-instances \
-      --query "InstanceStatuses[0].SystemStatus.Details[?Name=='reachability']|[0].Status" \
-      --output text 2>/dev/null || true)"
-  else
-    instance_reachability="$(aws ec2 describe-instance-status \
-      --region "${AWS_REGION}" \
-      --instance-ids "${INSTANCE_ID}" \
-      --include-all-instances \
-      --query "InstanceStatuses[0].InstanceStatus.Details[?Name=='reachability']|[0].Status" \
-      --output text 2>/dev/null || true)"
-    system_reachability="$(aws ec2 describe-instance-status \
-      --region "${AWS_REGION}" \
-      --instance-ids "${INSTANCE_ID}" \
-      --include-all-instances \
-      --query "InstanceStatuses[0].SystemStatus.Details[?Name=='reachability']|[0].Status" \
-      --output text 2>/dev/null || true)"
-  fi
+  instance_reachability="$(aws_cli ec2 describe-instance-status \
+    --region "${AWS_REGION}" \
+    --instance-ids "${INSTANCE_ID}" \
+    --include-all-instances \
+    --query "InstanceStatuses[0].InstanceStatus.Details[?Name=='reachability']|[0].Status" \
+    --output text 2>/dev/null || true)"
+  system_reachability="$(aws_cli ec2 describe-instance-status \
+    --region "${AWS_REGION}" \
+    --instance-ids "${INSTANCE_ID}" \
+    --include-all-instances \
+    --query "InstanceStatuses[0].SystemStatus.Details[?Name=='reachability']|[0].Status" \
+    --output text 2>/dev/null || true)"
   echo "instance_reachability=${instance_reachability}, system_reachability=${system_reachability}"
+}
+
+get_instance_state() {
+  aws_cli ec2 describe-instances \
+    --region "${AWS_REGION}" \
+    --instance-ids "${INSTANCE_ID}" \
+    --query "Reservations[0].Instances[0].State.Name" \
+    --output text
+}
+
+wait_for_instance_state() {
+  local desired_state="$1"
+  local timeout_sec="$2"
+  local waited=0
+  local current_state=""
+  while (( waited < timeout_sec )); do
+    current_state="$(get_instance_state)"
+    echo "  wait_instance_state target=${desired_state} current=${current_state} waited=${waited}s"
+    if [[ "${current_state}" == "${desired_state}" ]]; then
+      return 0
+    fi
+    sleep 10
+    waited=$((waited + 10))
+  done
+  echo "ERROR: 인스턴스 상태 대기 타임아웃 target=${desired_state} timeout=${timeout_sec}s"
+  return 1
+}
+
+wait_for_instance_ok() {
+  local timeout_sec="$1"
+  local waited=0
+  local instance_reachability=""
+  local system_reachability=""
+  while (( waited < timeout_sec )); do
+    instance_reachability="$(aws_cli ec2 describe-instance-status \
+      --region "${AWS_REGION}" \
+      --instance-ids "${INSTANCE_ID}" \
+      --include-all-instances \
+      --query "InstanceStatuses[0].InstanceStatus.Details[?Name=='reachability']|[0].Status" \
+      --output text 2>/dev/null || true)"
+    system_reachability="$(aws_cli ec2 describe-instance-status \
+      --region "${AWS_REGION}" \
+      --instance-ids "${INSTANCE_ID}" \
+      --include-all-instances \
+      --query "InstanceStatuses[0].SystemStatus.Details[?Name=='reachability']|[0].Status" \
+      --output text 2>/dev/null || true)"
+    echo "  wait_instance_ok instance=${instance_reachability} system=${system_reachability} waited=${waited}s"
+    if [[ "${instance_reachability}" == "passed" && "${system_reachability}" == "passed" ]]; then
+      return 0
+    fi
+    sleep 10
+    waited=$((waited + 10))
+  done
+  echo "ERROR: 인스턴스 상태체크 대기 타임아웃 timeout=${timeout_sec}s"
+  return 1
+}
+
+recover_instance_for_ssh() {
+  local state
+  local reachability_summary
+
+  state="$(get_instance_state)"
+  reachability_summary="$(check_instance_reachability)"
+  echo "  auto_recover current_state=${state}"
+  echo "  auto_recover ${reachability_summary}"
+
+  case "${state}" in
+    stopping)
+      echo "  - 인스턴스가 stopping 상태입니다. stopped 완료 후 시작합니다."
+      wait_for_instance_state "stopped" "${INSTANCE_STATUS_WAIT_TIMEOUT_SEC}"
+      aws_cli ec2 start-instances --region "${AWS_REGION}" --instance-ids "${INSTANCE_ID}" >/dev/null
+      wait_for_instance_state "running" "${INSTANCE_STATUS_WAIT_TIMEOUT_SEC}"
+      wait_for_instance_ok "${INSTANCE_STATUS_WAIT_TIMEOUT_SEC}"
+      ;;
+    stopped)
+      echo "  - 인스턴스가 stopped 상태입니다. 시작 후 상태체크 통과까지 대기합니다."
+      aws_cli ec2 start-instances --region "${AWS_REGION}" --instance-ids "${INSTANCE_ID}" >/dev/null
+      wait_for_instance_state "running" "${INSTANCE_STATUS_WAIT_TIMEOUT_SEC}"
+      wait_for_instance_ok "${INSTANCE_STATUS_WAIT_TIMEOUT_SEC}"
+      ;;
+    pending)
+      echo "  - 인스턴스가 pending 상태입니다. running/ok까지 대기합니다."
+      wait_for_instance_state "running" "${INSTANCE_STATUS_WAIT_TIMEOUT_SEC}"
+      wait_for_instance_ok "${INSTANCE_STATUS_WAIT_TIMEOUT_SEC}"
+      ;;
+    running)
+      if [[ "${reachability_summary}" == *"instance_reachability=passed"* && "${reachability_summary}" == *"system_reachability=passed"* ]]; then
+        echo "  - 인스턴스 상태는 정상입니다. SSH 경로(방화벽/네트워크/라우팅) 문제 가능성이 높아 자동 복구를 중단합니다."
+        return 1
+      fi
+      echo "  - running 이지만 reachability 비정상입니다. reboot 후 상태 복구를 시도합니다."
+      aws_cli ec2 reboot-instances --region "${AWS_REGION}" --instance-ids "${INSTANCE_ID}"
+      wait_for_instance_ok "${INSTANCE_STATUS_WAIT_TIMEOUT_SEC}"
+      ;;
+    *)
+      echo "  - 지원하지 않는 인스턴스 상태(state=${state})입니다. 자동 복구를 중단합니다."
+      return 1
+      ;;
+  esac
 }
 
 wait_for_ssh_ready() {
@@ -206,6 +292,33 @@ wait_for_ssh_ready() {
 
   echo "ERROR: SSH 접속 준비 실패 (${REMOTE_USER}@${REMOTE_HOST}:${REMOTE_PORT})"
   echo "힌트: EC2 Instance Reachability/SSM 상태 및 보안그룹, NACL, 라우팅을 확인하세요."
+  check_instance_reachability
+
+  if [[ "${AUTO_RECOVER_INSTANCE}" != "true" ]]; then
+    return 1
+  fi
+
+  echo "자동 복구 모드 활성화: 인스턴스 상태 복구를 시도합니다."
+  if ! recover_instance_for_ssh; then
+    return 1
+  fi
+
+  echo "복구 후 SSH 재점검 시작"
+  for attempt in $(seq 1 "${SSH_RETRY_COUNT}"); do
+    echo "  ssh_recheck attempt=${attempt}/${SSH_RETRY_COUNT}"
+    inject_eic_key
+    if ssh -i "${SSH_KEY}" -p "${REMOTE_PORT}" \
+      -o BatchMode=yes \
+      -o StrictHostKeyChecking=accept-new \
+      -o ConnectTimeout="${SSH_CONNECT_TIMEOUT}" \
+      "${REMOTE_USER}@${REMOTE_HOST}" "echo ssh_ready" >/dev/null 2>&1; then
+      echo "  ssh_recheck: success"
+      return 0
+    fi
+    sleep "${SSH_RETRY_INTERVAL}"
+  done
+
+  echo "ERROR: 자동 복구 후에도 SSH 접속 준비 실패 (${REMOTE_USER}@${REMOTE_HOST}:${REMOTE_PORT})"
   check_instance_reachability
   return 1
 }

@@ -11,7 +11,7 @@ permissions:
 
 concurrency:
   group: cd-api-deploy-main
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   deploy-api:
@@ -63,10 +63,22 @@ jobs:
             --query "Reservations[0].Instances[0].State.Name" \
             --output text)"
 
-          if [[ "${INSTANCE_STATE}" != "running" ]]; then
-            echo "ERROR: 배포 대상 인스턴스가 running 상태가 아닙니다. state=${INSTANCE_STATE}"
+          if [[ "${INSTANCE_STATE}" == "stopping" ]]; then
+            echo "instance is stopping -> wait stopped -> start"
+            aws ec2 wait instance-stopped --region "${AWS_REGION}" --instance-ids "${INSTANCE_ID}"
+            aws ec2 start-instances --region "${AWS_REGION}" --instance-ids "${INSTANCE_ID}" >/dev/null
+          elif [[ "${INSTANCE_STATE}" == "stopped" ]]; then
+            echo "instance is stopped -> start"
+            aws ec2 start-instances --region "${AWS_REGION}" --instance-ids "${INSTANCE_ID}" >/dev/null
+          elif [[ "${INSTANCE_STATE}" == "pending" ]]; then
+            echo "instance is pending -> wait running"
+          elif [[ "${INSTANCE_STATE}" != "running" ]]; then
+            echo "ERROR: 지원하지 않는 인스턴스 상태입니다. state=${INSTANCE_STATE}"
             exit 1
           fi
+
+          aws ec2 wait instance-running --region "${AWS_REGION}" --instance-ids "${INSTANCE_ID}"
+          aws ec2 wait instance-status-ok --region "${AWS_REGION}" --instance-ids "${INSTANCE_ID}"
 
           INSTANCE_REACHABILITY="$(aws ec2 describe-instance-status \
             --region "${AWS_REGION}" \
@@ -180,6 +192,8 @@ jobs:
           SSH_RETRY_COUNT: "6"
           SSH_RETRY_INTERVAL: "10"
           SSH_CONNECT_TIMEOUT: "10"
+          AUTO_RECOVER_INSTANCE: "true"
+          INSTANCE_STATUS_WAIT_TIMEOUT_SEC: "900"
           SSH_KEY: .tmp/deploy_key
           SSH_PUBLIC_KEY: .tmp/deploy_key.pub
         run: |
