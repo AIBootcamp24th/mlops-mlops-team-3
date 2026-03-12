@@ -8,7 +8,7 @@ import asyncio
 import requests
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from sqlalchemy import text
 
 from src.api.mysql_logger import mysql_analyze_by_id_logger
@@ -96,6 +96,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.get("/", include_in_schema=False)
+def root_redirect() -> RedirectResponse:
+    return RedirectResponse(url="/docs", status_code=307)
 
 
 def _extract_features(movie: dict) -> list[float]:

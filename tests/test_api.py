@@ -39,6 +39,12 @@ def test_health() -> None:
     assert "model_loaded" in body
 
 
+def test_root_redirects_to_docs() -> None:
+    response = client.get("/", follow_redirects=False)
+    assert response.status_code == 307
+    assert response.headers["location"] == "/docs"
+
+
 def test_analyze_by_title(monkeypatch) -> None:
     monkeypatch.setattr(tmdb_client, "search_movie", lambda _: {"id": 1})
     monkeypatch.setattr(
