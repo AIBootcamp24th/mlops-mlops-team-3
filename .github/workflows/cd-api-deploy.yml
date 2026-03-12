@@ -157,66 +157,143 @@ jobs:
           echo "resolved_remote_port=${REMOTE_PORT}"
           echo "resolved_remote_dir=${REMOTE_DIR}"
 
-      - name: Prepare SSH keys for deploy script
+      - name: Package deploy bundle
         shell: bash
         env:
-          SSH_PRIVATE_KEY: ${{ secrets.AWS_DEPLOY_SSH_PRIVATE_KEY }}
-          SSH_PUBLIC_KEY: ${{ secrets.AWS_DEPLOY_SSH_PUBLIC_KEY }}
+          PACKAGE_BUCKET: ${{ secrets.AWS_S3_RAW_BUCKET }}
         run: |
           set -euo pipefail
-          test -n "${SSH_PRIVATE_KEY}"
-          test -n "${SSH_PUBLIC_KEY}"
-
+          test -n "${PACKAGE_BUCKET}"
           mkdir -p .tmp
-          printf "%s\n" "${SSH_PRIVATE_KEY}" > .tmp/deploy_key
-          printf "%s\n" "${SSH_PUBLIC_KEY}" > .tmp/deploy_key.pub
-          chmod 600 .tmp/deploy_key
-          chmod 644 .tmp/deploy_key.pub
+          tar -C mlops_project -czf .tmp/mlops_project.tar.gz .
+          PACKAGE_KEY="deploy/api/${GITHUB_SHA}/mlops_project.tar.gz"
+          aws s3 cp .tmp/mlops_project.tar.gz "s3://${PACKAGE_BUCKET}/${PACKAGE_KEY}"
+          echo "DEPLOY_PACKAGE_BUCKET=${PACKAGE_BUCKET}" >> "${GITHUB_ENV}"
+          echo "DEPLOY_PACKAGE_KEY=${PACKAGE_KEY}" >> "${GITHUB_ENV}"
 
-      - name: Deploy API to AWS EC2
-        timeout-minutes: 45
+      - name: Deploy API to AWS EC2 via SSM
+        timeout-minutes: 50
         shell: bash
         env:
           AWS_REGION: ${{ secrets.AWS_REGION }}
           INSTANCE_ID: ${{ secrets.AWS_DEPLOY_INSTANCE_ID }}
-          INSTANCE_AZ: ${{ secrets.AWS_DEPLOY_INSTANCE_AZ }}
-          REMOTE_HOST: ${{ env.DEPLOY_REMOTE_HOST }}
-          REMOTE_USER: ${{ env.DEPLOY_REMOTE_USER }}
-          REMOTE_PORT: ${{ env.DEPLOY_REMOTE_PORT }}
           REMOTE_DIR: ${{ env.DEPLOY_REMOTE_DIR }}
           API_PORT: ${{ env.DEPLOY_API_PORT }}
           PRUNE_REMOTE: ${{ env.DEPLOY_PRUNE_REMOTE }}
-          SKIP_BUILD: "false"
-          DEPLOY_MODE: "image-only"
-          PRECHECK_SSH_BEFORE_BUILD: "true"
-          SSH_RETRY_COUNT: "6"
-          SSH_RETRY_INTERVAL: "10"
-          SSH_CONNECT_TIMEOUT: "10"
-          AUTO_RECOVER_INSTANCE: "true"
-          INSTANCE_STATUS_WAIT_TIMEOUT_SEC: "900"
-          SSH_KEY: .tmp/deploy_key
-          SSH_PUBLIC_KEY: .tmp/deploy_key.pub
+          DEPLOY_PACKAGE_BUCKET: ${{ env.DEPLOY_PACKAGE_BUCKET }}
+          DEPLOY_PACKAGE_KEY: ${{ env.DEPLOY_PACKAGE_KEY }}
         run: |
           set -euo pipefail
-          bash scripts/deploy_api_aws.sh
+          test -n "${DEPLOY_PACKAGE_BUCKET}"
+          test -n "${DEPLOY_PACKAGE_KEY}"
+          PACKAGE_URI="s3://${DEPLOY_PACKAGE_BUCKET}/${DEPLOY_PACKAGE_KEY}"
 
-      - name: Ensure CloudWatch Agent is running
+          PARAMS_JSON="$(python - <<'PY'
+          import json, os
+          package_uri = f"s3://{os.environ['DEPLOY_PACKAGE_BUCKET']}/{os.environ['DEPLOY_PACKAGE_KEY']}"
+          remote_dir = os.environ["REMOTE_DIR"]
+          api_port = os.environ["API_PORT"]
+          prune_remote = os.environ["PRUNE_REMOTE"]
+          commands = [
+              "set -euo pipefail",
+              "command -v aws >/dev/null 2>&1 || { echo 'ERROR: aws cli not found on instance'; exit 1; }",
+              "command -v docker >/dev/null 2>&1 || { echo 'ERROR: docker not found on instance'; exit 1; }",
+              f"REMOTE_DIR='{remote_dir}'",
+              f"PACKAGE_URI='{package_uri}'",
+              "TMP_DIR=\"/tmp/mlops-api-deploy-$(date +%s)\"",
+              "mkdir -p \"${TMP_DIR}\" \"${REMOTE_DIR}\"",
+              "aws s3 cp \"${PACKAGE_URI}\" \"${TMP_DIR}/mlops_project.tar.gz\"",
+              "tar -xzf \"${TMP_DIR}/mlops_project.tar.gz\" -C \"${REMOTE_DIR}\"",
+              "cd \"${REMOTE_DIR}\"",
+              "chmod +x scripts/deploy_api_on_instance.sh",
+              f"REMOTE_DIR='{remote_dir}' API_PORT='{api_port}' PRUNE_REMOTE='{prune_remote}' bash scripts/deploy_api_on_instance.sh",
+          ]
+          print(json.dumps({"commands": commands}))
+          PY
+          )"
+
+          COMMAND_ID="$(aws ssm send-command \
+            --region "${AWS_REGION}" \
+            --instance-ids "${INSTANCE_ID}" \
+            --document-name "AWS-RunShellScript" \
+            --comment "Deploy API via SSM" \
+            --parameters "${PARAMS_JSON}" \
+            --query "Command.CommandId" \
+            --output text)"
+
+          echo "ssm_command_id=${COMMAND_ID}"
+
+          STATUS="Pending"
+          for _ in $(seq 1 180); do
+            STATUS="$(aws ssm get-command-invocation \
+              --region "${AWS_REGION}" \
+              --command-id "${COMMAND_ID}" \
+              --instance-id "${INSTANCE_ID}" \
+              --query "Status" \
+              --output text 2>/dev/null || echo "Pending")"
+            echo "ssm_status=${STATUS}"
+            case "${STATUS}" in
+              Success|Failed|Cancelled|TimedOut|Undeliverable|Terminated|InvalidPlatform|AccessDenied)
+                break
+                ;;
+            esac
+            sleep 10
+          done
+
+          aws ssm get-command-invocation \
+            --region "${AWS_REGION}" \
+            --command-id "${COMMAND_ID}" \
+            --instance-id "${INSTANCE_ID}" \
+            --query "StandardOutputContent" \
+            --output text || true
+
+          aws ssm get-command-invocation \
+            --region "${AWS_REGION}" \
+            --command-id "${COMMAND_ID}" \
+            --instance-id "${INSTANCE_ID}" \
+            --query "StandardErrorContent" \
+            --output text || true
+
+          if [[ "${STATUS}" != "Success" ]]; then
+            echo "ERROR: SSM 배포 명령 실패 status=${STATUS}"
+            exit 1
+          fi
+
+      - name: Ensure CloudWatch Agent via SSM
         shell: bash
         env:
           AWS_REGION: ${{ secrets.AWS_REGION }}
           INSTANCE_ID: ${{ secrets.AWS_DEPLOY_INSTANCE_ID }}
-          INSTANCE_AZ: ${{ secrets.AWS_DEPLOY_INSTANCE_AZ }}
-          REMOTE_HOST: ${{ env.DEPLOY_REMOTE_HOST }}
-          REMOTE_USER: ${{ env.DEPLOY_REMOTE_USER }}
-          REMOTE_PORT: ${{ env.DEPLOY_REMOTE_PORT }}
-          SSH_KEY: .tmp/deploy_key
-          SSH_PUBLIC_KEY: .tmp/deploy_key.pub
         run: |
           set -euo pipefail
-          bash scripts/ensure_cloudwatch_agent.sh
+          PARAMS_JSON='{"commands":["set -euo pipefail","if command -v dnf >/dev/null 2>&1; then sudo dnf install -y amazon-cloudwatch-agent >/dev/null; elif command -v yum >/dev/null 2>&1; then sudo yum install -y amazon-cloudwatch-agent >/dev/null; elif command -v apt-get >/dev/null 2>&1; then sudo apt-get update -y >/dev/null && sudo apt-get install -y amazon-cloudwatch-agent >/dev/null; else echo ERROR: unsupported package manager; exit 1; fi","sudo mkdir -p /opt/aws/amazon-cloudwatch-agent/etc","sudo tee /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json >/dev/null <<'\''EOF'\''\n{\n  \"agent\": {\n    \"metrics_collection_interval\": 60,\n    \"run_as_user\": \"root\"\n  },\n  \"metrics\": {\n    \"namespace\": \"CWAgent\",\n    \"append_dimensions\": {\n      \"InstanceId\": \"${aws:InstanceId}\"\n    },\n    \"aggregation_dimensions\": [[\"InstanceId\"]],\n    \"metrics_collected\": {\n      \"disk\": {\n        \"measurement\": [\"used_percent\"],\n        \"resources\": [\"/\"],\n        \"ignore_file_system_types\": [\"sysfs\", \"devtmpfs\", \"tmpfs\", \"overlay\", \"squashfs\"]\n      }\n    }\n  }\n}\nEOF","sudo /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a fetch-config -m ec2 -c file:/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json -s >/dev/null","sudo systemctl enable amazon-cloudwatch-agent >/dev/null","sudo systemctl restart amazon-cloudwatch-agent","sudo systemctl is-active --quiet amazon-cloudwatch-agent"]}'
 
-      - name: Cleanup temporary SSH keys
-        if: ${{ always() }}
-        shell: bash
-        run: |
-          rm -f .tmp/deploy_key .tmp/deploy_key.pub
+          COMMAND_ID="$(aws ssm send-command \
+            --region "${AWS_REGION}" \
+            --instance-ids "${INSTANCE_ID}" \
+            --document-name "AWS-RunShellScript" \
+            --comment "Ensure CloudWatch Agent via SSM" \
+            --parameters "${PARAMS_JSON}" \
+            --query "Command.CommandId" \
+            --output text)"
+
+          STATUS="Pending"
+          for _ in $(seq 1 60); do
+            STATUS="$(aws ssm get-command-invocation \
+              --region "${AWS_REGION}" \
+              --command-id "${COMMAND_ID}" \
+              --instance-id "${INSTANCE_ID}" \
+              --query "Status" \
+              --output text 2>/dev/null || echo "Pending")"
+            case "${STATUS}" in
+              Success|Failed|Cancelled|TimedOut|Undeliverable|Terminated|InvalidPlatform|AccessDenied)
+                break
+                ;;
+            esac
+            sleep 5
+          done
+
+          if [[ "${STATUS}" != "Success" ]]; then
+            echo "ERROR: CloudWatch Agent 보장 실패 status=${STATUS}"
+            exit 1
+          fi
