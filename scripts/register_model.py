@@ -8,7 +8,10 @@ from pathlib import Path
 import wandb
 
 from src.config import settings
+from src.data.dataset_registry import CSV_TYPE_TRAIN, upsert_dataset_registry
+from src.data.s3_io import copy_object
 from src.utils.aws_session import get_boto3_session
+from src.utils.champion_registry import champion_train_key
 
 
 def _project_name() -> str:
@@ -147,6 +150,29 @@ def main() -> None:
         "promoted_at_utc": datetime.now(timezone.utc).isoformat(),
     }
     champion_registry_uri = _write_champion_registry(champion_registry)
+
+    # champion 경로에 train.csv 복사 (tmdb/{approved_run_id}/train.csv)
+    data_version = str(approved_run.summary.get("data_version", "")).strip()
+    if data_version and settings.aws_s3_raw_bucket:
+        try:
+            dest_key = champion_train_key(approved_run.id)
+            copy_object(
+                source_bucket=settings.aws_s3_raw_bucket,
+                source_key=data_version,
+                dest_bucket=settings.aws_s3_raw_bucket,
+                dest_key=dest_key,
+            )
+            champion_registry["train_data_s3_key"] = f"s3://{settings.aws_s3_raw_bucket}/{dest_key}"
+            _write_champion_registry(champion_registry)
+            upsert_dataset_registry(
+                approved_run_id=approved_run.id,
+                csv_type=CSV_TYPE_TRAIN,
+                s3_key=dest_key,
+                row_count=None,
+            )
+            print(f"- train 데이터 champion 경로 복사 완료: {dest_key}")
+        except Exception as e:
+            print(f"- 경고: train 데이터 champion 경로 복사 실패 (무시됨): {e}")
 
     model_manifest = {
         "approved_run_id": approved_run.id,

@@ -19,6 +19,7 @@ def run_batch_inference(
     input_s3_key: str,
     output_s3_key: str,
     feature_cols: list[str],
+    approved_run_id: str | None = None,
 ) -> str:
     with TemporaryDirectory() as tmpdir:
         local_model = str(Path(tmpdir) / "model.pt")
@@ -66,4 +67,21 @@ def run_batch_inference(
         out_df["predicted_rating"] = pred
         out_df.to_csv(local_output, index=False)
 
-        return upload_file(local_output, settings.aws_s3_pred_bucket, output_s3_key)
+        s3_uri = upload_file(local_output, settings.aws_s3_pred_bucket, output_s3_key)
+
+        # RDS/Aurora tmdb_dataset_registry에 predictions 메타 upsert (선택적)
+        if approved_run_id:
+            try:
+                from src.data.dataset_registry import upsert_dataset_registry
+                from src.data.dataset_registry import CSV_TYPE_PREDICTIONS
+
+                upsert_dataset_registry(
+                    approved_run_id=approved_run_id,
+                    csv_type=CSV_TYPE_PREDICTIONS,
+                    s3_key=output_s3_key,
+                    row_count=len(out_df),
+                )
+            except Exception:
+                pass
+
+        return s3_uri

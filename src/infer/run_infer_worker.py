@@ -33,6 +33,7 @@ def main() -> None:
                 input_s3_key=payload["input_s3_key"],
                 output_s3_key=payload["output_s3_key"],
                 feature_cols=payload["feature_cols"],
+                approved_run_id=payload.get("approved_run_id"),
             )
             print(f"Batch inference output uploaded: {output_uri}")
             delete_message(settings.infer_queue_url, payload["_receipt_handle"])

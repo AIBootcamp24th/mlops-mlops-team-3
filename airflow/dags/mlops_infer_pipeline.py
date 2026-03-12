@@ -9,6 +9,7 @@ from datetime import datetime
 
 from airflow import DAG
 from airflow.datasets import Dataset
+from airflow.operators.bash import BashOperator
 from airflow.operators.python import PythonOperator
 
 DATASET_DOCS_URL = "https://github.com/AIBootcamp24th/mlops-mlops-team-3/tree/main/mlops_project/docs"
@@ -70,14 +71,24 @@ def verify_infer_result(output_s3_key: str, bucket: str, timeout_sec: int = 300,
 
 
 def _dispatch_infer_message(**context) -> str:
-    """추론 메시지 발행 후 output_s3_key를 XCom에 반환."""
+    """추론 메시지 발행 후 output_s3_key를 XCom에 반환. champion prefix 사용."""
     import subprocess
 
+    from src.utils.champion_registry import champion_predictions_key, resolve_approved_run_id
+
+    approved_run_id = resolve_approved_run_id()
+    if not approved_run_id:
+        raise RuntimeError(
+            "champion registry에 approved_run_id가 없습니다. "
+            "품질 게이트를 통과한 학습이 먼저 완료되어야 합니다."
+        )
     ds = context["ds_nodash"]
     ts = context["ts_nodash"]
-    output_s3_key = f"pred/batch/{ds}_{ts}.csv"
+    output_s3_key = champion_predictions_key(approved_run_id, ds=ds, ts=ts)
     env = os.environ.copy()
     env["OUTPUT_S3_KEY"] = output_s3_key
+    env["DATASET_DATE"] = ds
+    env["EXECUTION_TS"] = ts
     env["PYTHONPATH"] = "/opt/airflow/project"
     subprocess.run(
         ["python", "scripts/send_infer_sqs_message.py"],
@@ -112,6 +123,13 @@ with DAG(
         python_callable=validate_runtime_env,
     )
 
+    export_infer = BashOperator(
+        task_id="export_infer_to_s3",
+        append_env=True,
+        env={"PYTHONPATH": "/opt/airflow/project"},
+        bash_command="cd /opt/airflow/project && python scripts/export_infer_to_s3.py",
+    )
+
     dispatch_infer = PythonOperator(
         task_id="dispatch_infer_message",
         python_callable=_dispatch_infer_message,
@@ -123,4 +141,4 @@ with DAG(
         python_callable=_verify_infer_result,
     )
 
-    env_check >> dispatch_infer >> verify_infer
+    env_check >> export_infer >> dispatch_infer >> verify_infer
