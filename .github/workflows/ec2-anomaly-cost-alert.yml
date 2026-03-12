@@ -28,19 +28,17 @@ jobs:
         || (github.event_name == 'schedule' && github.event.schedule != '10 1 * * *')
       }}
     runs-on: ubuntu-latest
+    env:
+      PROJECT_START_DATE: "2026-02-27"
+      PROJECT_STOP_DATE: "2026-03-15"
     steps:
       - name: Check orchestration period window
         id: period_guard
         shell: bash
         run: |
           set -euo pipefail
-          if [ "${GITHUB_EVENT_NAME}" != "schedule" ]; then
-            echo "in_window=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
           today_kst="$(TZ=Asia/Seoul date +%Y-%m-%d)"
-          if [[ "$today_kst" < "2026-02-27" || "$today_kst" > "2026-03-15" ]]; then
+          if [[ "$today_kst" < "${PROJECT_START_DATE}" || "$today_kst" >= "${PROJECT_STOP_DATE}" ]]; then
             echo "in_window=false" >> "$GITHUB_OUTPUT"
           else
             echo "in_window=true" >> "$GITHUB_OUTPUT"
@@ -252,19 +250,17 @@ jobs:
         || (github.event_name == 'schedule' && github.event.schedule == '10 1 * * *')
       }}
     runs-on: ubuntu-latest
+    env:
+      PROJECT_START_DATE: "2026-02-27"
+      PROJECT_STOP_DATE: "2026-03-15"
     steps:
       - name: Check orchestration period window
         id: period_guard
         shell: bash
         run: |
           set -euo pipefail
-          if [ "${GITHUB_EVENT_NAME}" != "schedule" ]; then
-            echo "in_window=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
           today_kst="$(TZ=Asia/Seoul date +%Y-%m-%d)"
-          if [[ "$today_kst" < "2026-02-27" || "$today_kst" > "2026-03-15" ]]; then
+          if [[ "$today_kst" < "${PROJECT_START_DATE}" || "$today_kst" >= "${PROJECT_STOP_DATE}" ]]; then
             echo "in_window=false" >> "$GITHUB_OUTPUT"
           else
             echo "in_window=true" >> "$GITHUB_OUTPUT"

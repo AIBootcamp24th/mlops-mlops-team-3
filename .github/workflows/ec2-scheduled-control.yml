@@ -13,6 +13,8 @@ on:
   schedule:
     # 평일 매시 5분: role별 시작/중지 시간 정책 판정
     - cron: "5 * * * 1-5"
+    # 매일 00:05(KST): 종료일 강제 정지 및 야간 stop 보장
+    - cron: "5 15 * * *"
 
 permissions:
   contents: read
@@ -20,35 +22,152 @@ permissions:
 jobs:
   control:
     runs-on: ubuntu-latest
+    env:
+      PROJECT_START_DATE: "2026-02-27"
+      PROJECT_STOP_DATE: "2026-03-15"
+      PROJECT_ASG_NAME: "mlops-api-asg"
+      PROJECT_DB_IDENTIFIER_PREFIX: "team-prj-group3-dev-mlops-db"
     steps:
       - name: Check orchestration period window
         id: period_guard
         shell: bash
         run: |
           set -euo pipefail
-          if [ "${GITHUB_EVENT_NAME}" != "schedule" ]; then
-            echo "in_window=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
           today_kst="$(TZ=Asia/Seoul date +%Y-%m-%d)"
-          if [[ "$today_kst" < "2026-02-27" || "$today_kst" > "2026-03-15" ]]; then
+          if [[ "$today_kst" < "${PROJECT_START_DATE}" ]]; then
             echo "in_window=false" >> "$GITHUB_OUTPUT"
-          else
+            echo "project_ended=false" >> "$GITHUB_OUTPUT"
+          elif [[ "$today_kst" < "${PROJECT_STOP_DATE}" ]]; then
             echo "in_window=true" >> "$GITHUB_OUTPUT"
+            echo "project_ended=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "in_window=false" >> "$GITHUB_OUTPUT"
+            echo "project_ended=true" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Checkout
-        if: ${{ steps.period_guard.outputs.in_window == 'true' }}
+        if: ${{ steps.period_guard.outputs.in_window == 'true' || steps.period_guard.outputs.project_ended == 'true' }}
         uses: actions/checkout@v4
 
       - name: Configure AWS credentials
-        if: ${{ steps.period_guard.outputs.in_window == 'true' }}
+        if: ${{ steps.period_guard.outputs.in_window == 'true' || steps.period_guard.outputs.project_ended == 'true' }}
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Force shutdown after project end date
+        if: ${{ steps.period_guard.outputs.project_ended == 'true' }}
+        id: force_shutdown
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          target_file="config/ec2_schedule_targets.csv"
+          mapfile -t target_names < <(
+            awk -F',' '
+              NR == 1 { next }
+              {
+                gsub(/^[ \t]+|[ \t]+$/, "", $1)
+                if ($1 != "") print $1
+              }
+            ' "$target_file"
+          )
+
+          if [ "${#target_names[@]}" -eq 0 ]; then
+            echo "강제 종료 대상 Name 태그가 없습니다: $target_file"
+            exit 1
+          fi
+
+          names_csv=$(IFS=, ; echo "${target_names[*]}")
+          total_stopped=0
+          regions=$(aws ec2 describe-regions --query "Regions[].RegionName" --output text)
+
+          for region in $regions; do
+            rows=$(aws ec2 describe-instances \
+              --region "$region" \
+              --filters "Name=tag:Name,Values=${names_csv}" "Name=instance-state-name,Values=pending,running,stopping,stopped" \
+              --query "Reservations[].Instances[].[InstanceId,State.Name]" \
+              --output text)
+
+            stop_ids=()
+            if [ -n "${rows:-}" ] && [ "$rows" != "None" ]; then
+              while IFS=$'\t' read -r instance_id state; do
+                if [ -z "${instance_id:-}" ] || [ "${instance_id}" = "None" ]; then
+                  continue
+                fi
+                if [ "${state}" = "running" ] || [ "${state}" = "pending" ]; then
+                  stop_ids+=("${instance_id}")
+                fi
+              done <<< "$rows"
+            fi
+
+            if [ "${#stop_ids[@]}" -gt 0 ]; then
+              aws ec2 stop-instances --region "$region" --instance-ids "${stop_ids[@]}" >/dev/null
+              total_stopped=$((total_stopped + ${#stop_ids[@]}))
+            fi
+          done
+
+          asg_name="${PROJECT_ASG_NAME:-mlops-api-asg}"
+          asg_exists=$(aws autoscaling describe-auto-scaling-groups \
+            --auto-scaling-group-names "$asg_name" \
+            --query "length(AutoScalingGroups)" \
+            --output text)
+
+          if [ "${asg_exists}" != "0" ]; then
+            aws autoscaling update-auto-scaling-group \
+              --auto-scaling-group-name "$asg_name" \
+              --min-size 0 \
+              --max-size 0 \
+              --desired-capacity 0
+            asg_result="scaled_to_zero"
+          else
+            asg_result="not_found"
+          fi
+
+          db_prefix="${PROJECT_DB_IDENTIFIER_PREFIX:-team-prj-group3-dev-mlops-db}"
+          stopped_rds_instances=0
+          stopped_aurora_clusters=0
+
+          db_instance_rows=$(aws rds describe-db-instances \
+            --query "DBInstances[].[DBInstanceIdentifier,DBInstanceStatus,Engine]" \
+            --output text || true)
+          if [ -n "${db_instance_rows:-}" ] && [ "${db_instance_rows}" != "None" ]; then
+            while IFS=$'\t' read -r db_id db_status db_engine; do
+              if [[ "${db_id:-}" != ${db_prefix}* ]]; then
+                continue
+              fi
+              if [ "${db_status:-}" = "available" ] && [[ "${db_engine:-}" != aurora* ]]; then
+                aws rds stop-db-instance --db-instance-identifier "${db_id}" >/dev/null
+                stopped_rds_instances=$((stopped_rds_instances + 1))
+              fi
+            done <<< "$db_instance_rows"
+          fi
+
+          db_cluster_rows=$(aws rds describe-db-clusters \
+            --query "DBClusters[].[DBClusterIdentifier,Status,Engine]" \
+            --output text || true)
+          if [ -n "${db_cluster_rows:-}" ] && [ "${db_cluster_rows}" != "None" ]; then
+            while IFS=$'\t' read -r cluster_id cluster_status cluster_engine; do
+              if [[ "${cluster_id:-}" != ${db_prefix}* ]]; then
+                continue
+              fi
+              if [ "${cluster_status:-}" = "available" ] && [[ "${cluster_engine:-}" == aurora* ]]; then
+                aws rds stop-db-cluster --db-cluster-identifier "${cluster_id}" >/dev/null
+                stopped_aurora_clusters=$((stopped_aurora_clusters + 1))
+              fi
+            done <<< "$db_cluster_rows"
+          fi
+
+          generated_at_kst="$(TZ=Asia/Seoul date "+%Y-%m-%d %H:%M:%S %Z")"
+          message=$(printf "[프로젝트 종료 강제 정지]\n- 적용 시각(KST): %s\n- 종료 기준일: %s (KST)\n- stop 처리 EC2 수: %s개\n- 대상 ASG: %s (%s)\n- stop 처리 RDS 인스턴스 수: %s개\n- stop 처리 Aurora 클러스터 수: %s개\n- 결과: 프로젝트 종료일 이후 운영 로직 비활성화 완료" \
+            "$generated_at_kst" "${PROJECT_STOP_DATE}" "$total_stopped" "$asg_name" "$asg_result" "$stopped_rds_instances" "$stopped_aurora_clusters")
+          {
+            echo "slack_message<<EOF"
+            echo "${message}"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Start or stop target EC2 instances
         if: ${{ steps.period_guard.outputs.in_window == 'true' }}
@@ -305,6 +424,39 @@ jobs:
                               "color": "danger",
                               "title": "AWS EC2 스케줄 실행/중단 실패",
                               "text": f"워크플로우 오류가 발생했습니다. 실행 URL: {os.environ['RUN_URL']}",
+                          }
+                      ],
+                  }
+              )
+          )
+          PY
+          )
+
+          curl -sS -X POST https://slack.com/api/chat.postMessage \
+            -H "Authorization: Bearer ${SLACK_BOT_TOKEN}" \
+            -H "Content-Type: application/json; charset=utf-8" \
+            --data "${payload}"
+
+      - name: Send Slack project stop notification (manual run)
+        if: ${{ steps.period_guard.outputs.project_ended == 'true' && github.event_name == 'workflow_dispatch' }}
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_CHANNEL_ID: ${{ secrets.SLACK_CHANNEL_ID }}
+          MESSAGE: ${{ steps.force_shutdown.outputs.slack_message }}
+        run: |
+          payload=$(python - <<'PY'
+          import json
+          import os
+
+          print(
+              json.dumps(
+                  {
+                      "channel": os.environ["SLACK_CHANNEL_ID"],
+                      "attachments": [
+                          {
+                              "color": "warning",
+                              "title": "프로젝트 종료일 이후 운영 중지 적용",
+                              "text": os.environ["MESSAGE"],
                           }
                       ],
                   }

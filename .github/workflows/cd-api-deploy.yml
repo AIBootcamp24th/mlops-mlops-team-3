@@ -2,9 +2,9 @@ name: CD API Deploy to AWS
 
 on:
   workflow_dispatch:
-  workflow_run:
-    workflows: ["CI"]
-    types: [completed]
+  push:
+    tags:
+      - "v*"
 
 permissions:
   contents: read
@@ -19,22 +19,20 @@ jobs:
       ${{
         (
           github.event_name == 'workflow_dispatch'
-          && github.ref == 'refs/heads/main'
+          && startsWith(github.ref, 'refs/tags/')
         )
         || (
-          github.event_name == 'workflow_run'
-          &&
-          github.event.workflow_run.conclusion == 'success'
-          && github.event.workflow_run.head_branch == 'main'
+          github.event_name == 'push'
+          && startsWith(github.ref, 'refs/tags/v')
         )
       }}
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
-      - name: Checkout merged main commit
+      - name: Checkout tagged commit
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+          ref: ${{ github.sha }}
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -67,6 +65,28 @@ jobs:
 
           if [[ "${INSTANCE_STATE}" != "running" ]]; then
             echo "ERROR: 배포 대상 인스턴스가 running 상태가 아닙니다. state=${INSTANCE_STATE}"
+            exit 1
+          fi
+
+          INSTANCE_REACHABILITY="$(aws ec2 describe-instance-status \
+            --region "${AWS_REGION}" \
+            --instance-ids "${INSTANCE_ID}" \
+            --include-all-instances \
+            --query "InstanceStatuses[0].InstanceStatus.Details[?Name=='reachability']|[0].Status" \
+            --output text)"
+          SYSTEM_REACHABILITY="$(aws ec2 describe-instance-status \
+            --region "${AWS_REGION}" \
+            --instance-ids "${INSTANCE_ID}" \
+            --include-all-instances \
+            --query "InstanceStatuses[0].SystemStatus.Details[?Name=='reachability']|[0].Status" \
+            --output text)"
+
+          echo "instance_reachability=${INSTANCE_REACHABILITY}"
+          echo "system_reachability=${SYSTEM_REACHABILITY}"
+
+          if [[ "${INSTANCE_REACHABILITY}" == "failed" || "${SYSTEM_REACHABILITY}" == "failed" ]]; then
+            echo "ERROR: 배포 대상 인스턴스 Reachability check가 실패 상태입니다."
+            echo "       EC2 재부팅 또는 네트워크(SSM/SSH) 상태 복구 후 재시도하세요."
             exit 1
           fi
 
@@ -142,7 +162,7 @@ jobs:
           chmod 644 .tmp/deploy_key.pub
 
       - name: Deploy API to AWS EC2
-        timeout-minutes: 20
+        timeout-minutes: 45
         shell: bash
         env:
           AWS_REGION: ${{ secrets.AWS_REGION }}
@@ -156,6 +176,10 @@ jobs:
           PRUNE_REMOTE: ${{ env.DEPLOY_PRUNE_REMOTE }}
           SKIP_BUILD: "false"
           DEPLOY_MODE: "image-only"
+          PRECHECK_SSH_BEFORE_BUILD: "true"
+          SSH_RETRY_COUNT: "6"
+          SSH_RETRY_INTERVAL: "10"
+          SSH_CONNECT_TIMEOUT: "10"
           SSH_KEY: .tmp/deploy_key
           SSH_PUBLIC_KEY: .tmp/deploy_key.pub
         run: |
