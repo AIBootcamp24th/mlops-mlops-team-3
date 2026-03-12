@@ -86,8 +86,13 @@ cp "${NGINX_TEMPLATE_PATH}" "${NGINX_RUNTIME_PATH}"
 sed -i "s/REPLACE_UPSTREAM/${NEXT_NAME}/g" "${NGINX_RUNTIME_PATH}"
 
 if docker ps -a --format '{{.Names}}' | grep -qx "${PROXY_NAME}"; then
+  CURRENT_PROXY_CONF_SRC="$(docker inspect -f '{{range .Mounts}}{{if eq .Destination "/etc/nginx/conf.d/default.conf"}}{{.Source}}{{end}}{{end}}' "${PROXY_NAME}")"
+  if [[ -z "${CURRENT_PROXY_CONF_SRC}" ]]; then
+    echo "ERROR: 기존 프록시 컨테이너의 Nginx conf 마운트 경로를 찾지 못했습니다."
+    exit 1
+  fi
+  cp "${NGINX_RUNTIME_PATH}" "${CURRENT_PROXY_CONF_SRC}"
   docker start "${PROXY_NAME}" >/dev/null 2>&1 || true
-  docker cp "${NGINX_RUNTIME_PATH}" "${PROXY_NAME}:/etc/nginx/conf.d/default.conf"
   docker exec "${PROXY_NAME}" nginx -t
   docker exec "${PROXY_NAME}" nginx -s reload
 else
