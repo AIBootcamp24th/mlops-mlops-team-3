@@ -17,13 +17,15 @@
 - [송민성](https://github.com/alstjd0051)
 - [이재석](https://github.com/wotjrzm)
 
-### 기여도 (수동 관리)
+### 기여도
 
 | 팀원 (이름 + GitHub)                                           | 기여도 |
 | -------------------------------------------------------------- | -----: |
-| [유준우 (팀장) (@joonwoo-yoo)](https://github.com/joonwoo-yoo) | 37.50% |
-| [송민성 (@alstjd0051)](https://github.com/alstjd0051)          | 61.36% |
-| [이재석 (@wotjrzm)](https://github.com/wotjrzm)                |  1.14% |
+| [유준우 (팀장) (@joonwoo-yoo)](https://github.com/joonwoo-yoo) | 36.26% |
+| [송민성 (@alstjd0051)](https://github.com/alstjd0051)          | 62.64% |
+| [이재석 (@wotjrzm)](https://github.com/wotjrzm)                |  1.10% |
+
+- 집계 기준: `gh api repos/AIBootcamp24th/mlops-mlops-team-3/contributors --paginate` 결과 중 팀원 계정의 `contributions` 합계(91) 대비 비율
 
 ## 3. 업무 분담
 
@@ -188,10 +190,10 @@ cp .env.example .env
 - `ci.yml`(수동 실행 시): `scripts/register_model.py`로 W&B 기반 최소 품질 게이트 확인
 - `notify.yml`: 재사용 가능한 Slack 커스텀 알림 워크플로우
 - `ec2-monitoring-daily.yml`: 매일 EC2 인스턴스 현황 집계 후 Slack 알림
-- `ec2-scheduled-control.yml`: 평일 매시 실행으로 `config/ec2_schedule_targets.csv`의 role별 시작/중지 시간 정책 자동 적용
+- `ec2-scheduled-control.yml`: 평일 매시 실행으로 `config/ec2_schedule_targets.csv`의 role별 시작/중지 시간 정책 자동 적용, `2026-03-15 00:00 KST` 이후에는 강제 정지(대상 EC2 stop + ASG capacity 0 + RDS/Aurora stop 시도) 모드로 전환
 - `ec2-queue-autoscale.yml`: SQS backlog 기반 `role=train|infer` 워커 자동 시작/중지
 - `ec2-anomaly-cost-alert.yml`: 10분 단위 이상 징후(고CPU/디스크 부족 위험/헬스체크 실패) 탐지 + 24시간 평균 CPU/Network/Disk 기준 저사용 후보 알림
-- 스케줄 기반 워크플로우는 `2026-02-27` ~ `2026-03-15` 기간에서만 실행되도록 기간 가드 적용
+- 스케줄/수동 포함 운영 워크플로우는 `2026-02-27` ~ `2026-03-14`까지만 운영 로직을 실행하고, `2026-03-15`부터는 운영 로직 비활성화(비용 발생 최소화)
 - 비용 상한(3/15 누적 10만원) 운영을 위해 Repository Variables 기본값:
   - `TRAIN_QUEUE_SCALE_OUT_THRESHOLD=2`
   - `INFER_QUEUE_SCALE_OUT_THRESHOLD=5`

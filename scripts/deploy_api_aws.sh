@@ -27,6 +27,10 @@ CLI_LOCAL_IMAGE_TAG="${LOCAL_IMAGE_TAG-}"
 CLI_REMOTE_IMAGE_TAG="${REMOTE_IMAGE_TAG-}"
 CLI_SKIP_BUILD="${SKIP_BUILD-}"
 CLI_DEPLOY_MODE="${DEPLOY_MODE-}"
+CLI_PRECHECK_SSH_BEFORE_BUILD="${PRECHECK_SSH_BEFORE_BUILD-}"
+CLI_SSH_RETRY_COUNT="${SSH_RETRY_COUNT-}"
+CLI_SSH_RETRY_INTERVAL="${SSH_RETRY_INTERVAL-}"
+CLI_SSH_CONNECT_TIMEOUT="${SSH_CONNECT_TIMEOUT-}"
 
 if [[ -f "${PROJECT_ROOT}/remote.env" ]]; then
   set -a
@@ -52,6 +56,10 @@ REMOTE_IMAGE_TAG="${REMOTE_IMAGE_TAG:-mlops_project-api:latest}"
 SKIP_BUILD="${SKIP_BUILD:-false}"
 DEPLOY_MODE="${DEPLOY_MODE:-auto}"
 NGINX_TEMPLATE_PATH="${PROJECT_ROOT}/nginx/default.conf"
+PRECHECK_SSH_BEFORE_BUILD="${PRECHECK_SSH_BEFORE_BUILD:-true}"
+SSH_RETRY_COUNT="${SSH_RETRY_COUNT:-8}"
+SSH_RETRY_INTERVAL="${SSH_RETRY_INTERVAL:-10}"
+SSH_CONNECT_TIMEOUT="${SSH_CONNECT_TIMEOUT:-10}"
 
 # remote.env 로딩 후에도 CLI/환경변수 입력값이 있으면 우선 적용
 [[ -n "${CLI_AWS_PROFILE}" ]] && AWS_PROFILE="${CLI_AWS_PROFILE}"
@@ -70,6 +78,10 @@ NGINX_TEMPLATE_PATH="${PROJECT_ROOT}/nginx/default.conf"
 [[ -n "${CLI_REMOTE_IMAGE_TAG}" ]] && REMOTE_IMAGE_TAG="${CLI_REMOTE_IMAGE_TAG}"
 [[ -n "${CLI_SKIP_BUILD}" ]] && SKIP_BUILD="${CLI_SKIP_BUILD}"
 [[ -n "${CLI_DEPLOY_MODE}" ]] && DEPLOY_MODE="${CLI_DEPLOY_MODE}"
+[[ -n "${CLI_PRECHECK_SSH_BEFORE_BUILD}" ]] && PRECHECK_SSH_BEFORE_BUILD="${CLI_PRECHECK_SSH_BEFORE_BUILD}"
+[[ -n "${CLI_SSH_RETRY_COUNT}" ]] && SSH_RETRY_COUNT="${CLI_SSH_RETRY_COUNT}"
+[[ -n "${CLI_SSH_RETRY_INTERVAL}" ]] && SSH_RETRY_INTERVAL="${CLI_SSH_RETRY_INTERVAL}"
+[[ -n "${CLI_SSH_CONNECT_TIMEOUT}" ]] && SSH_CONNECT_TIMEOUT="${CLI_SSH_CONNECT_TIMEOUT}"
 
 if [[ -z "${REMOTE_HOST:-}" ]]; then
   # AWS_PROFILE이 설정된 경우에만 --profile 옵션 사용
@@ -121,21 +133,6 @@ fi
 
 NGINX_TEMPLATE_CONTENT_ESCAPED="$(sed 's/[$`\\]/\\&/g' "${NGINX_TEMPLATE_PATH}")"
 
-echo "=== AWS API 배포 시작 ==="
-echo "instance_id: ${INSTANCE_ID}"
-echo "remote: ${REMOTE_USER}@${REMOTE_HOST}:${REMOTE_PORT}"
-echo "remote_dir: ${REMOTE_DIR}"
-echo "deploy_mode(requested): ${DEPLOY_MODE}"
-echo
-
-if [[ "${SKIP_BUILD}" == "true" ]]; then
-  echo "[1/7] 로컬 이미지 빌드 건너뜀 (SKIP_BUILD=true)"
-else
-  echo "[1/7] 로컬에서 amd64 API 이미지 빌드"
-  docker buildx build --platform linux/amd64 -f Dockerfile -t "${LOCAL_IMAGE_TAG}" --load .
-fi
-
-echo "[2/7] EC2 Instance Connect 임시 키 주입"
 inject_eic_key() {
   # EC2 Instance Connect 키는 짧은 TTL을 가지므로 SSH 직전에 재주입한다.
   if [[ -n "${AWS_PROFILE:-}" ]]; then
@@ -156,6 +153,85 @@ inject_eic_key() {
   fi
 }
 
+check_instance_reachability() {
+  local instance_reachability="unknown"
+  local system_reachability="unknown"
+  if [[ -n "${AWS_PROFILE:-}" ]]; then
+    instance_reachability="$(aws ec2 describe-instance-status \
+      --profile "${AWS_PROFILE}" \
+      --region "${AWS_REGION}" \
+      --instance-ids "${INSTANCE_ID}" \
+      --include-all-instances \
+      --query "InstanceStatuses[0].InstanceStatus.Details[?Name=='reachability']|[0].Status" \
+      --output text 2>/dev/null || true)"
+    system_reachability="$(aws ec2 describe-instance-status \
+      --profile "${AWS_PROFILE}" \
+      --region "${AWS_REGION}" \
+      --instance-ids "${INSTANCE_ID}" \
+      --include-all-instances \
+      --query "InstanceStatuses[0].SystemStatus.Details[?Name=='reachability']|[0].Status" \
+      --output text 2>/dev/null || true)"
+  else
+    instance_reachability="$(aws ec2 describe-instance-status \
+      --region "${AWS_REGION}" \
+      --instance-ids "${INSTANCE_ID}" \
+      --include-all-instances \
+      --query "InstanceStatuses[0].InstanceStatus.Details[?Name=='reachability']|[0].Status" \
+      --output text 2>/dev/null || true)"
+    system_reachability="$(aws ec2 describe-instance-status \
+      --region "${AWS_REGION}" \
+      --instance-ids "${INSTANCE_ID}" \
+      --include-all-instances \
+      --query "InstanceStatuses[0].SystemStatus.Details[?Name=='reachability']|[0].Status" \
+      --output text 2>/dev/null || true)"
+  fi
+  echo "instance_reachability=${instance_reachability}, system_reachability=${system_reachability}"
+}
+
+wait_for_ssh_ready() {
+  local attempt
+  for attempt in $(seq 1 "${SSH_RETRY_COUNT}"); do
+    echo "  ssh_ready_check attempt=${attempt}/${SSH_RETRY_COUNT}"
+    inject_eic_key
+    if ssh -i "${SSH_KEY}" -p "${REMOTE_PORT}" \
+      -o BatchMode=yes \
+      -o StrictHostKeyChecking=accept-new \
+      -o ConnectTimeout="${SSH_CONNECT_TIMEOUT}" \
+      "${REMOTE_USER}@${REMOTE_HOST}" "echo ssh_ready" >/dev/null 2>&1; then
+      echo "  ssh_ready_check: success"
+      return 0
+    fi
+    sleep "${SSH_RETRY_INTERVAL}"
+  done
+
+  echo "ERROR: SSH 접속 준비 실패 (${REMOTE_USER}@${REMOTE_HOST}:${REMOTE_PORT})"
+  echo "힌트: EC2 Instance Reachability/SSM 상태 및 보안그룹, NACL, 라우팅을 확인하세요."
+  check_instance_reachability
+  return 1
+}
+
+echo "=== AWS API 배포 시작 ==="
+echo "instance_id: ${INSTANCE_ID}"
+echo "remote: ${REMOTE_USER}@${REMOTE_HOST}:${REMOTE_PORT}"
+echo "remote_dir: ${REMOTE_DIR}"
+echo "deploy_mode(requested): ${DEPLOY_MODE}"
+echo
+
+echo "[0/7] SSH 사전 점검"
+if [[ "${PRECHECK_SSH_BEFORE_BUILD}" == "true" ]]; then
+  wait_for_ssh_ready
+else
+  echo "  - PRECHECK_SSH_BEFORE_BUILD=false: SSH 사전 점검 생략"
+fi
+
+if [[ "${SKIP_BUILD}" == "true" ]]; then
+  echo "[1/7] 로컬 이미지 빌드 건너뜀 (SKIP_BUILD=true)"
+else
+  echo "[1/7] 로컬에서 amd64 API 이미지 빌드"
+  docker buildx build --platform linux/amd64 -f Dockerfile -t "${LOCAL_IMAGE_TAG}" --load .
+fi
+
+echo "[2/7] EC2 Instance Connect 임시 키 주입"
 inject_eic_key
 
 EFFECTIVE_DEPLOY_MODE="${DEPLOY_MODE}"
@@ -207,13 +283,29 @@ elif [[ "${PRUNE_REMOTE}" == "true" ]]; then
 fi
 
 echo "[6/7] 이미지 전송"
-inject_eic_key
-docker save "${LOCAL_IMAGE_TAG}" | ssh -i "${SSH_KEY}" -p "${REMOTE_PORT}" -o StrictHostKeyChecking=accept-new \
-  "${REMOTE_USER}@${REMOTE_HOST}" "
-    docker image rm -f ${REMOTE_IMAGE_TAG} >/dev/null 2>&1 || true &&
-    docker load &&
-    docker tag ${LOCAL_IMAGE_TAG} ${REMOTE_IMAGE_TAG}
-  "
+image_transfer_ok="false"
+for attempt in $(seq 1 "${SSH_RETRY_COUNT}"); do
+  echo "  image_transfer attempt=${attempt}/${SSH_RETRY_COUNT}"
+  inject_eic_key
+  if docker save "${LOCAL_IMAGE_TAG}" | ssh -i "${SSH_KEY}" -p "${REMOTE_PORT}" \
+    -o StrictHostKeyChecking=accept-new \
+    -o ConnectTimeout="${SSH_CONNECT_TIMEOUT}" \
+    "${REMOTE_USER}@${REMOTE_HOST}" "
+      docker image rm -f ${REMOTE_IMAGE_TAG} >/dev/null 2>&1 || true &&
+      docker load &&
+      docker tag ${LOCAL_IMAGE_TAG} ${REMOTE_IMAGE_TAG}
+    "; then
+    image_transfer_ok="true"
+    break
+  fi
+  sleep "${SSH_RETRY_INTERVAL}"
+done
+
+if [[ "${image_transfer_ok}" != "true" ]]; then
+  echo "ERROR: 이미지 전송 실패 (SSH 타임아웃/연결 실패)"
+  check_instance_reachability
+  exit 1
+fi
 
 echo "[7/8] 원격 블루/그린 배포 + 프록시 전환"
 inject_eic_key
