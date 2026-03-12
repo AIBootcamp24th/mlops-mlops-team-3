@@ -31,15 +31,15 @@ echo "remote_dir: ${REMOTE_DIR}"
 echo "api_port: ${API_PORT}"
 echo
 
-echo "[1/6] API 이미지 빌드"
-docker build -f Dockerfile -t "${LOCAL_IMAGE_TAG}" .
-
-echo "[2/6] 디스크 정리(선택)"
+echo "[1/6] 디스크 정리(선택)"
 if [[ "${PRUNE_REMOTE}" == "true" ]]; then
   docker image prune -af >/dev/null || true
   docker builder prune -af >/dev/null || true
   docker container prune -f >/dev/null || true
 fi
+
+echo "[2/6] API 이미지 빌드"
+docker build -f Dockerfile -t "${LOCAL_IMAGE_TAG}" .
 
 echo "[3/6] 블루/그린 슬롯 결정"
 docker network inspect "${NETWORK_NAME}" >/dev/null 2>&1 || docker network create "${NETWORK_NAME}" >/dev/null
