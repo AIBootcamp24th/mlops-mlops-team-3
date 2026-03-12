@@ -31,6 +31,27 @@ echo "remote_dir: ${REMOTE_DIR}"
 echo "api_port: ${API_PORT}"
 echo
 
+proxy_check_once() {
+  local path="$1"
+  local tmp_file="$2"
+  curl -s -o "${tmp_file}" -w "%{http_code}" "http://127.0.0.1:${API_PORT}${path}" || true
+}
+
+verify_proxy_endpoints() {
+  local health_code=""
+  local docs_code=""
+  for i in $(seq 1 10); do
+    health_code="$(proxy_check_once "/health" "/tmp/mlops_api_health.json")"
+    docs_code="$(proxy_check_once "/docs" "/tmp/mlops_api_docs.html")"
+    echo "  proxy_verify try=${i} health=${health_code} docs=${docs_code}"
+    if [[ "${health_code}" == "200" && "${docs_code}" == "200" ]]; then
+      return 0
+    fi
+    sleep 2
+  done
+  return 1
+}
+
 echo "[1/6] 디스크 정리(선택)"
 if [[ "${PRUNE_REMOTE}" == "true" ]]; then
   docker image prune -af >/dev/null || true
@@ -93,11 +114,29 @@ if docker ps -a --format '{{.Names}}' | grep -qx "${PROXY_NAME}"; then
     echo "ERROR: 기존 프록시 컨테이너의 Nginx conf 마운트 경로를 찾지 못했습니다."
     exit 1
   fi
+  BACKUP_PROXY_CONF="${CURRENT_PROXY_CONF_SRC}.bak.$(date +%s)"
+  cp "${CURRENT_PROXY_CONF_SRC}" "${BACKUP_PROXY_CONF}"
   # bind mount된 파일은 inode를 유지한 채 덮어써야 컨테이너에서 즉시 반영된다.
   cat "${NGINX_RUNTIME_PATH}" > "${CURRENT_PROXY_CONF_SRC}"
   docker start "${PROXY_NAME}" >/dev/null 2>&1 || true
-  docker exec "${PROXY_NAME}" nginx -t
-  docker exec "${PROXY_NAME}" nginx -s reload
+  if ! docker exec "${PROXY_NAME}" nginx -t; then
+    echo "ERROR: 새 프록시 설정 검증 실패. 기존 설정으로 롤백합니다."
+    cat "${BACKUP_PROXY_CONF}" > "${CURRENT_PROXY_CONF_SRC}"
+    exit 1
+  fi
+  if ! docker exec "${PROXY_NAME}" nginx -s reload; then
+    echo "ERROR: nginx reload 실패. 기존 설정으로 롤백합니다."
+    cat "${BACKUP_PROXY_CONF}" > "${CURRENT_PROXY_CONF_SRC}"
+    docker exec "${PROXY_NAME}" nginx -s reload || true
+    exit 1
+  fi
+  if ! verify_proxy_endpoints; then
+    echo "ERROR: 프록시 전환 후 검증 실패. 기존 업스트림으로 롤백합니다."
+    cat "${BACKUP_PROXY_CONF}" > "${CURRENT_PROXY_CONF_SRC}"
+    docker exec "${PROXY_NAME}" nginx -s reload || true
+    exit 1
+  fi
+  rm -f "${BACKUP_PROXY_CONF}" >/dev/null 2>&1 || true
 else
   docker run -d --name "${PROXY_NAME}" --restart unless-stopped \
     --network "${NETWORK_NAME}" \
@@ -105,25 +144,27 @@ else
     -v "${NGINX_RUNTIME_PATH}:/etc/nginx/conf.d/default.conf:ro" \
     nginx:1.27-alpine >/dev/null
   docker exec "${PROXY_NAME}" nginx -t
+  if ! verify_proxy_endpoints; then
+    echo "ERROR: 신규 프록시 기동 후 검증 실패"
+    docker logs --tail 120 "${PROXY_NAME}" || true
+    exit 1
+  fi
 fi
-
-if [[ -n "${ACTIVE_NAME}" && "${ACTIVE_NAME}" != "${NEXT_NAME}" ]]; then
-  docker rm -f "${ACTIVE_NAME}" >/dev/null 2>&1 || true
-fi
-docker rm -f "${LEGACY_NAME}" >/dev/null 2>&1 || true
 
 echo "[6/6] 배포 후 헬스체크"
 CODE=""
 for i in $(seq 1 6); do
-  CODE="$(curl -s -o /tmp/mlops_api_health.json -w "%{http_code}" "http://127.0.0.1:${API_PORT}/health" || true)"
-  echo "  try=${i} code=${CODE}"
-  if [[ "${CODE}" == "200" ]]; then
+  HEALTH_CODE="$(proxy_check_once "/health" "/tmp/mlops_api_health.json")"
+  DOCS_CODE="$(proxy_check_once "/docs" "/tmp/mlops_api_docs.html")"
+  CODE="${HEALTH_CODE}"
+  echo "  try=${i} health=${HEALTH_CODE} docs=${DOCS_CODE}"
+  if [[ "${HEALTH_CODE}" == "200" && "${DOCS_CODE}" == "200" ]]; then
     break
   fi
   sleep 2
 done
 
-if [[ "${CODE}" != "200" ]]; then
+if [[ "${HEALTH_CODE}" != "200" || "${DOCS_CODE}" != "200" ]]; then
   echo "ERROR: 프록시 엔드포인트 헬스체크 실패 (127.0.0.1:${API_PORT})"
   echo "proxy_logs_tail:"
   docker logs --tail 120 "${PROXY_NAME}" || true
@@ -131,6 +172,11 @@ if [[ "${CODE}" != "200" ]]; then
   docker logs --tail 120 "${NEXT_NAME}" || true
   exit 1
 fi
+
+if [[ -n "${ACTIVE_NAME}" && "${ACTIVE_NAME}" != "${NEXT_NAME}" ]]; then
+  docker rm -f "${ACTIVE_NAME}" >/dev/null 2>&1 || true
+fi
+docker rm -f "${LEGACY_NAME}" >/dev/null 2>&1 || true
 
 echo
 echo "=== 배포 결과 ==="
