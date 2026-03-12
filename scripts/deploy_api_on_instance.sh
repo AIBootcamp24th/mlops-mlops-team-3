@@ -84,6 +84,8 @@ echo "[5/6] Nginx 프록시 전환"
 NGINX_RUNTIME_PATH="${REMOTE_DIR}/nginx/default.runtime.conf"
 cp "${NGINX_TEMPLATE_PATH}" "${NGINX_RUNTIME_PATH}"
 sed -i "s/REPLACE_UPSTREAM/${NEXT_NAME}/g" "${NGINX_RUNTIME_PATH}"
+# 템플릿에 플레이스홀더가 이미 치환된 상태여도 현재 대상 슬롯으로 강제 정렬한다.
+sed -i -E "s/mlops-api-(blue|green)/${NEXT_NAME}/g" "${NGINX_RUNTIME_PATH}"
 
 if docker ps -a --format '{{.Names}}' | grep -qx "${PROXY_NAME}"; then
   CURRENT_PROXY_CONF_SRC="$(docker inspect -f '{{range .Mounts}}{{if eq .Destination "/etc/nginx/conf.d/default.conf"}}{{.Source}}{{end}}{{end}}' "${PROXY_NAME}")"
@@ -91,7 +93,8 @@ if docker ps -a --format '{{.Names}}' | grep -qx "${PROXY_NAME}"; then
     echo "ERROR: 기존 프록시 컨테이너의 Nginx conf 마운트 경로를 찾지 못했습니다."
     exit 1
   fi
-  cp "${NGINX_RUNTIME_PATH}" "${CURRENT_PROXY_CONF_SRC}"
+  # bind mount된 파일은 inode를 유지한 채 덮어써야 컨테이너에서 즉시 반영된다.
+  cat "${NGINX_RUNTIME_PATH}" > "${CURRENT_PROXY_CONF_SRC}"
   docker start "${PROXY_NAME}" >/dev/null 2>&1 || true
   docker exec "${PROXY_NAME}" nginx -t
   docker exec "${PROXY_NAME}" nginx -s reload
@@ -110,6 +113,7 @@ fi
 docker rm -f "${LEGACY_NAME}" >/dev/null 2>&1 || true
 
 echo "[6/6] 배포 후 헬스체크"
+CODE=""
 for i in $(seq 1 6); do
   CODE="$(curl -s -o /tmp/mlops_api_health.json -w "%{http_code}" "http://127.0.0.1:${API_PORT}/health" || true)"
   echo "  try=${i} code=${CODE}"
@@ -118,6 +122,15 @@ for i in $(seq 1 6); do
   fi
   sleep 2
 done
+
+if [[ "${CODE}" != "200" ]]; then
+  echo "ERROR: 프록시 엔드포인트 헬스체크 실패 (127.0.0.1:${API_PORT})"
+  echo "proxy_logs_tail:"
+  docker logs --tail 120 "${PROXY_NAME}" || true
+  echo "next_container_logs_tail:"
+  docker logs --tail 120 "${NEXT_NAME}" || true
+  exit 1
+fi
 
 echo
 echo "=== 배포 결과 ==="
