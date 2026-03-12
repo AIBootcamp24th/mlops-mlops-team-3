@@ -274,12 +274,14 @@ else
 fi
 
 echo "[5/7] 원격 디스크 정리(선택)"
-if [[ "${PRUNE_REMOTE}" == "true" && "${EFFECTIVE_DEPLOY_MODE}" == "full" ]]; then
+if [[ "${PRUNE_REMOTE}" == "true" ]]; then
   inject_eic_key
   ssh -i "${SSH_KEY}" -p "${REMOTE_PORT}" -o StrictHostKeyChecking=accept-new \
-    "${REMOTE_USER}@${REMOTE_HOST}" "docker system prune -af >/dev/null || true; docker builder prune -af >/dev/null || true"
-elif [[ "${PRUNE_REMOTE}" == "true" ]]; then
-  echo "  - image-only 모드: 디스크 정리 생략"
+    "${REMOTE_USER}@${REMOTE_HOST}" "
+      docker image prune -af >/dev/null || true
+      docker builder prune -af >/dev/null || true
+      docker container prune -f >/dev/null || true
+    "
 fi
 
 echo "[6/7] 이미지 전송"
