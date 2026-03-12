@@ -80,6 +80,36 @@ jobs:
           aws ec2 wait instance-running --region "${AWS_REGION}" --instance-ids "${INSTANCE_ID}"
           aws ec2 wait instance-status-ok --region "${AWS_REGION}" --instance-ids "${INSTANCE_ID}"
 
+          # SSM 연결이 끊겨 있으면 SSM 기반 배포가 항상 실패하므로 사전 복구를 시도한다.
+          SSM_PING_STATUS="$(aws ssm describe-instance-information \
+            --region "${AWS_REGION}" \
+            --query "InstanceInformationList[?InstanceId=='${INSTANCE_ID}'].PingStatus | [0]" \
+            --output text)"
+          echo "ssm_ping_status(before)=${SSM_PING_STATUS}"
+
+          if [[ "${SSM_PING_STATUS}" != "Online" ]]; then
+            echo "SSM is not Online -> reboot instance and wait"
+            aws ec2 reboot-instances --region "${AWS_REGION}" --instance-ids "${INSTANCE_ID}"
+            aws ec2 wait instance-status-ok --region "${AWS_REGION}" --instance-ids "${INSTANCE_ID}"
+
+            for _ in $(seq 1 30); do
+              SSM_PING_STATUS="$(aws ssm describe-instance-information \
+                --region "${AWS_REGION}" \
+                --query "InstanceInformationList[?InstanceId=='${INSTANCE_ID}'].PingStatus | [0]" \
+                --output text)"
+              echo "ssm_ping_status(wait)=${SSM_PING_STATUS}"
+              if [[ "${SSM_PING_STATUS}" == "Online" ]]; then
+                break
+              fi
+              sleep 10
+            done
+          fi
+
+          if [[ "${SSM_PING_STATUS}" != "Online" ]]; then
+            echo "ERROR: 대상 인스턴스의 SSM PingStatus가 Online이 아닙니다. status=${SSM_PING_STATUS}"
+            exit 1
+          fi
+
           INSTANCE_REACHABILITY="$(aws ec2 describe-instance-status \
             --region "${AWS_REGION}" \
             --instance-ids "${INSTANCE_ID}" \
