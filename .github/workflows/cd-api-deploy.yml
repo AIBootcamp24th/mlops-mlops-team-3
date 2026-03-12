@@ -186,6 +186,21 @@ jobs:
           set -euo pipefail
           bash scripts/deploy_api_aws.sh
 
+      - name: Ensure CloudWatch Agent is running
+        shell: bash
+        env:
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+          INSTANCE_ID: ${{ secrets.AWS_DEPLOY_INSTANCE_ID }}
+          INSTANCE_AZ: ${{ secrets.AWS_DEPLOY_INSTANCE_AZ }}
+          REMOTE_HOST: ${{ env.DEPLOY_REMOTE_HOST }}
+          REMOTE_USER: ${{ env.DEPLOY_REMOTE_USER }}
+          REMOTE_PORT: ${{ env.DEPLOY_REMOTE_PORT }}
+          SSH_KEY: .tmp/deploy_key
+          SSH_PUBLIC_KEY: .tmp/deploy_key.pub
+        run: |
+          set -euo pipefail
+          bash scripts/ensure_cloudwatch_agent.sh
+
       - name: Cleanup temporary SSH keys
         if: ${{ always() }}
         shell: bash
