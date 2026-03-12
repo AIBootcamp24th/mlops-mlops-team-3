@@ -122,7 +122,14 @@ graph LR
    - 현재 운영 배포는 `scripts/deploy_api_aws.sh` 기반 수동 배포를 사용합니다.
    - 배포 스크립트가 `linux/amd64` 이미지 빌드(또는 `SKIP_BUILD=true` 재사용) 후 EC2로 전송/기동하고 `/health`로 배포 검증합니다.
    - API 컨테이너는 블루/그린(`mlops-api-blue`, `mlops-api-green`) 방식으로 교체되고, Nginx 프록시(`mlops-api-proxy`)는 새 컨테이너로 업스트림을 전환합니다.
+   - `cd-api-deploy.yml`는 배포 직후 `scripts/ensure_cloudwatch_agent.sh`를 실행해 CloudWatch Agent 설치/설정/재기동을 보장합니다.
+   - 이 후처리 단계는 API 컨테이너 트래픽 전환과 분리되어 동작하므로 무중단 배포 성격을 유지합니다.
    - 배포 후 Nginx(80/443)와 Certbot TLS 인증서를 통해 `https://dongsol.com` 경로를 서비스 엔드포인트로 고정합니다.
+
+6. **CloudWatch 기반 운영 알림 Flow**
+   - `ec2-anomaly-cost-alert.yml`, `ec2-queue-autoscale.yml`가 AWS CLI로 CloudWatch 지표(`AWS/EC2`, `CWAgent`)를 조회합니다.
+   - 이상 징후 또는 스케일 이벤트 조건 충족 시 Slack Bot API(`chat.postMessage`)로 운영 채널에 알림을 전송합니다.
+   - 즉, CloudWatch Alarm이 Slack으로 직접 전송하는 방식이 아니라, GitHub Actions가 CloudWatch 지표를 판정해 Slack에 통지하는 구조입니다.
 
 ### AWS 블루/그린 무중단 배포 과정 (EC2 + Docker + Nginx)
 
@@ -186,7 +193,7 @@ cp .env.example .env
 ## 7. GitHub Actions / CI & CD
 
 - `ci.yml`: `push/pull_request/workflow_dispatch`에서 `uv sync + ruff + pytest` 실행
-- `cd-api-deploy.yml`: API 서비스의 EC2 배포 및 헬스체크 자동화
+- `cd-api-deploy.yml`: API 서비스 EC2 배포 + 헬스체크 + CloudWatch Agent 보장(`scripts/ensure_cloudwatch_agent.sh`)
 - `ci.yml`(수동 실행 시): `scripts/register_model.py`로 W&B 기반 최소 품질 게이트 확인
 - `notify.yml`: 재사용 가능한 Slack 커스텀 알림 워크플로우
 - `ec2-monitoring-daily.yml`: 매일 EC2 인스턴스 현황 집계 후 Slack 알림
