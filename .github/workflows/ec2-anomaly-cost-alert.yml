@@ -38,7 +38,7 @@ jobs:
         run: |
           set -euo pipefail
           today_kst="$(TZ=Asia/Seoul date +%Y-%m-%d)"
-          if [[ "$today_kst" < "${PROJECT_START_DATE}" || "$today_kst" >= "${PROJECT_STOP_DATE}" ]]; then
+          if [[ "$today_kst" < "${PROJECT_START_DATE}" || "$today_kst" == "${PROJECT_STOP_DATE}" || "$today_kst" > "${PROJECT_STOP_DATE}" ]]; then
             echo "in_window=false" >> "$GITHUB_OUTPUT"
           else
             echo "in_window=true" >> "$GITHUB_OUTPUT"
@@ -260,7 +260,7 @@ jobs:
         run: |
           set -euo pipefail
           today_kst="$(TZ=Asia/Seoul date +%Y-%m-%d)"
-          if [[ "$today_kst" < "${PROJECT_START_DATE}" || "$today_kst" >= "${PROJECT_STOP_DATE}" ]]; then
+          if [[ "$today_kst" < "${PROJECT_START_DATE}" || "$today_kst" == "${PROJECT_STOP_DATE}" || "$today_kst" > "${PROJECT_STOP_DATE}" ]]; then
             echo "in_window=false" >> "$GITHUB_OUTPUT"
           else
             echo "in_window=true" >> "$GITHUB_OUTPUT"
