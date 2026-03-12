@@ -27,6 +27,18 @@
 
 - 집계 기준: `gh api repos/AIBootcamp24th/mlops-mlops-team-3/contributors --paginate` 결과 중 팀원 계정의 `contributions` 합계(91) 대비 비율
 
+
+### 기여도 (main 브랜치 커밋 기준)
+
+`main` 브랜치의 `git shortlog -sne main` 결과를 기준으로, `shields.io` 배지로 자동 렌더링합니다.
+<!-- contribution-table:start -->
+| 팀원 (이름 + GitHub) | 기여도 |
+| --- | ---: |
+| [송민성 (@alstjd0051)](https://github.com/alstjd0051) | ![contribution](https://img.shields.io/badge/contribution-64.13%25-2ea043?style=for-the-badge&logo=github) |
+| [유준우 (팀장) (@joonwoo-yoo)](https://github.com/joonwoo-yoo) | ![contribution](https://img.shields.io/badge/contribution-35.87%25-1f6feb?style=for-the-badge&logo=github) |
+| [이재석 (@wotjrzm)](https://github.com/wotjrzm) | ![contribution](https://img.shields.io/badge/contribution-0.00%25-9e9e9e?style=for-the-badge&logo=github) |
+<!-- contribution-table:end -->
+
 ## 3. 업무 분담
 
 ### MLOps
