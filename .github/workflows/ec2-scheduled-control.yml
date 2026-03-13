@@ -24,7 +24,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       PROJECT_START_DATE: "2026-02-27"
-      PROJECT_STOP_DATE: "2026-03-15"
+      PROJECT_STOP_DATE: "2026-03-13"
       PROJECT_ASG_NAME: "mlops-api-asg"
       PROJECT_DB_IDENTIFIER_PREFIX: "team-prj-group3-dev-mlops-db"
     steps:
