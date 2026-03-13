@@ -23,7 +23,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       PROJECT_START_DATE: "2026-02-27"
-      PROJECT_STOP_DATE: "2026-03-15"
+      PROJECT_STOP_DATE: "2026-03-13"
     steps:
       - name: Check orchestration period window
         id: period_guard
